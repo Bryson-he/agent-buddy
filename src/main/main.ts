@@ -29,7 +29,7 @@ import {
 // losing the connector token (and with it the link to Grok Bot), settings and rules.
 // Snapshot mode (pictures for the docs) uses a throwaway folder, so the pictures
 // never show the owner's real bots, rules or settings.
-const SNAPSHOT_MODE = process.argv.some((a) => a.startsWith("--snapshot-dir="));
+const SNAPSHOT_MODE = process.argv.some((a) => a.startsWith("--snapshot-dir=") || a.startsWith("--record-dir="));
 app.setPath("userData", SNAPSHOT_MODE
   ? path.join(app.getPath("temp"), "agent-buddy-snapshots")
   : path.join(app.getPath("appData"), "agent-buddy"));
@@ -1202,6 +1202,59 @@ async function snapshotAll(dir: string): Promise<void> {
   app.quit();
 }
 
+// ---------- Dev aid: `electron . --record-dir=DIR` ----------
+// Plays a short story with sample agents and saves the notch frame by frame,
+// for the animation in the README (scripts/make-apng.js joins the frames).
+async function recordDemo(dir: string): Promise<void> {
+  if (!overlay) return;
+  const win = overlay;
+  fs.mkdirSync(dir, { recursive: true });
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  saveAppSettings({ agentColours: { scout: "#f3f3f1", atlas: "#f0353f", juno: "#2f7cf6", pixel: "#19b8a6" }, glass: true, onboarded: true, sounds: false });
+  pushSettings();
+  // A wallpaper behind the notch, so the picture reads on a light or dark page.
+  // It only changes left to right: identical rows keep the file small.
+  await win.webContents.insertCSS("html { height: 100%; background: linear-gradient(90deg, #14304d 0%, #1c5d8f 35%, #2aa3d6 68%, #16294a 100%) no-repeat !important; }");
+  setState("idle");
+  await wait(600);
+
+  const frames: { t: number; png: Buffer }[] = [];
+  let recording = true;
+  const start = Date.now();
+  const loop = (async () => {
+    while (recording) {
+      const t0 = Date.now();
+      frames.push({ t: t0 - start, png: (await win.webContents.capturePage()).toPNG() });
+      const left = 70 - (Date.now() - t0);
+      if (left > 0) await wait(left);
+    }
+  })();
+
+  const story: [number, () => void][] = [
+    [900, () => setState("greeting")],
+    [2000, () => setState("working", "Reading the brief", "Scout", undefined, "Draft the summary")],
+    [2000, () => setState("working", "Drafting the summary", "Scout", undefined, "Email it to Sam")],
+    [1700, () => setState("working", "Running the tests", "Claude Code")],
+    [1900, () => setState("needsYou", "Send the summary to Sam?", "Scout", ["Send", "Don't send"])],
+    [2600, () => setState("working", "You chose \"Send\"", "Scout")],
+    [1300, () => setState("finished", "Summary sent to Sam", "Scout")],
+    [2300, () => setState("needsYou", "Allow this command? (deletes files)", "Claude Code", ["Approve", "Deny"])],
+    [2600, () => setState("working", "You chose \"Deny\"", "Claude Code")],
+    [1300, () => setState("error", "Couldn't reach the server", "Juno")],
+    [2400, () => setState("finished", "All 42 tests pass", "Claude Code")],
+    [2600, () => {}],
+  ];
+  for (const [before, act] of story) {
+    await wait(before);
+    act();
+  }
+  recording = false;
+  await loop;
+  frames.forEach((f, i) => fs.writeFileSync(path.join(dir, `frame-${String(i).padStart(4, "0")}.png`), f.png));
+  fs.writeFileSync(path.join(dir, "times.json"), JSON.stringify(frames.map((f) => f.t)));
+  app.quit();
+}
+
 // ---------- App ----------
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -1253,6 +1306,13 @@ if (!gotLock) {
     ipcMain.handle("panel:get", () => historySnapshot());
     ipcMain.handle("panel:colours", () => loadAppSettings().agentColours ?? {});
 
+    const recDir = process.argv.find((a) => a.startsWith("--record-dir="));
+    if (recDir) {
+      overlay.webContents.once("did-finish-load", () =>
+        setTimeout(() => recordDemo(recDir.slice("--record-dir=".length)), 1600)
+      );
+      return;
+    }
     const snapDir = process.argv.find((a) => a.startsWith("--snapshot-dir="));
     if (snapDir) {
       overlay.webContents.once("did-finish-load", () =>

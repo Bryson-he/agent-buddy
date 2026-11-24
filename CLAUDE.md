@@ -107,6 +107,8 @@ Against the live app, started with `$env:AGENT_BUDDY_DEV="1"`: `scripts/test-ask
 
 **Pictures:** `npx electron . --snapshot-dir=shots` saves a PNG of every state and window and exits. It uses a throwaway data folder and sample agents, so nothing personal appears. `npx electron scripts/readme-images.js shots` rebuilds `docs/images/`.
 
+**Animation:** `npx electron . --record-dir=rec` plays a short story with sample agents (`recordDemo` in `main.ts`) and saves it frame by frame; `node scripts/make-apng.js rec docs/images/demo.png` joins the frames into an animated PNG, storing only what changed per frame. Edit the `story` list to change what it shows.
+
 A desktop-control tool that hides windows of apps it has no access to will hide the overlay; grant it access to the app first.
 
 ## Not built

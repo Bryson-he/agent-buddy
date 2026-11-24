@@ -12,9 +12,11 @@ Works with Claude Code, Cursor, Grok Bot, and anything that speaks MCP.
 
 <br />
 
-<img src="docs/images/states.png" alt="Six views of the notch: working, needs you, finished, several agents, a risky command, and idle" />
+<img src="docs/images/demo.png" width="420" alt="Animation: an agent works through its steps, asks a question and gets an answer, a second agent asks before a risky command, and a third reports an error" />
 
 </div>
+
+<img src="docs/images/states.png" alt="Six views of the notch: working, needs you, finished, several agents, a risky command, and idle" />
 
 ## Why
 
@@ -109,6 +111,7 @@ npm start
 | `node scripts/test-risky.mjs` | Risky-command rules |
 | `node scripts/test-hooks.mjs` | The real hook scripts against a fake Agent Buddy |
 | `npx electron . --snapshot-dir=shots` | Save a picture of every state and window, then exit |
+| `npx electron . --record-dir=rec` then `node scripts/make-apng.js rec docs/images/demo.png` | Record the demo story and build the animation above |
 
 `CLAUDE.md` is a map of the code for AI assistants and people alike. Note that Windows only is supported today; the overlay and notifications rely on Windows behaviour.
 
