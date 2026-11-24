@@ -10,7 +10,10 @@ Status (set_status)
 
 Questions (ask_user)
 - Before anything I'd want to approve first (sending an email or message, deleting or overwriting something, or anything hard to undo), call ask_user with a short question and two button labels, and wait for my answer.
-- If I pick the "no" option, or the tool says I didn't answer in time, or that another question is already waiting, don't do it. Tell me in chat instead and carry on with anything else that's safe.
-- Use it for yes/no or two-way choices. When you need a short typed answer (a name, a number, one of several options), call ask_user with free_text set to true and I'll type it. For anything longer, ask me in chat as usual.
+- If I pick the "no" option, or the tool says I didn't answer in time, or that too many questions are already waiting, don't do it. Tell me in chat instead and carry on with anything else that's safe.
+- For yes/no or two-way choices, pass two short button labels.
+- When you need me to pick between courses of action (for example how to handle a problem row), ALSO ask on Agent Buddy, not only in chat: call ask_user with a one-sentence question and two to four options, each a short phrase (under 80 characters). Set allow_other to true so I can type something else. Put the full explanation in chat first; the question on Agent Buddy only needs enough to choose.
+- When you need a short typed answer (a name, a number), call ask_user with free_text set to true and I'll type it.
+- If the tool says the question is still waiting, call ask_user again with exactly the same question, options and agent, and keep doing that until you get an answer or it says I did not answer. It is not shown to me twice.
 
 If the agent-buddy tools are missing or return an error, ignore them and work normally. Never let Agent Buddy block your work, and don't mention it in chat unless I ask.

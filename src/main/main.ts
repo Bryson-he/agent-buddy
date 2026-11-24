@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, global
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
-import type { AskUserArgs, AskUserResult, BuddyBackend } from "../mcp/tools.js";
+import type { AskUserArgs, AskUserResult, AskWait, BuddyBackend } from "../mcp/tools.js";
 import { BUDDY_PORT, startBuddyServer } from "./server.js";
 import { pickModel, runGrokChat, type ChatMessage } from "./grok.js";
 import { clearApiKey, getApiKey, saveApiKey } from "./keystore.js";
@@ -47,7 +47,7 @@ function setStartWithWindows(on: boolean): void {
 }
 
 const OVERLAY_WIDTH = 420;
-const OVERLAY_HEIGHT = 260;
+const OVERLAY_HEIGHT = 400; // room for a question with four choices
 const DEFAULT_AGENT = "Agent Buddy";
 const CURSOR_NEAR_PX = 80;
 const CURSOR_MOVE_MIN = 2;
@@ -310,11 +310,11 @@ function setState(
   state: AgentState,
   text?: string,
   agent?: string,
-  options?: [string, string],
+  options?: string[],
   next?: string,
-  ask?: { input?: boolean; canRemember?: boolean },
+  ask?: { input?: boolean; canRemember?: boolean; list?: boolean; other?: boolean },
 ): void {
-  overlay?.webContents.send("buddy:state", { state, text, agent, options, next, input: ask?.input === true, canRemember: ask?.canRemember === true });
+  overlay?.webContents.send("buddy:state", { state, text, agent, options, next, input: ask?.input === true, canRemember: ask?.canRemember === true, list: ask?.list === true, other: ask?.other === true });
 }
 
 // ---------- Activity panel ----------
@@ -393,14 +393,45 @@ function agentKey(name?: string): string {
 type Ask = {
   agent: string;
   question: string;
-  options: [string, string];
-  freeText: boolean; // the user types an answer instead of choosing a button
+  options: string[]; // two to four answers
+  list: boolean;     // shown as a lettered list (more than two answers, or long ones) instead of two buttons
+  allowOther: boolean; // the list ends with "Something else", which takes a typed answer
+  freeText: boolean; // the user types an answer instead of choosing
   deadline: number;
   nonce: string; // one-time code that notification buttons must echo back
-  resolve: (r: AskUserResult) => void;
+  /** The request waiting for the answer. Null while the question is up but its request has gone back as "pending". */
+  resolve: ((r: AskUserResult) => void) | null;
   timer?: NodeJS.Timeout;
+  detachTimer?: NodeJS.Timeout;
   toast?: Notification;
 };
+/** Labels this long or longer do not fit a button, so the question becomes a list. */
+const BUTTON_LABEL_MAX = 24;
+
+// An answer given while no request was waiting for it (the agent's request had
+// gone back as "pending"). Handed over when the agent asks the same question again.
+const parkedAnswers = new Map<string, { answer: string | null; at: number }>();
+const PARKED_KEEP_MS = 15 * 60_000;
+const askKey = (agent: string, question: string) => `${agent}|${normalise(question)}`;
+
+/** Gives the answer to whoever is waiting, or keeps it for when the agent asks again. */
+function deliver(q: Ask, r: AskUserResult): void {
+  clearTimeout(q.detachTimer);
+  if (q.resolve) q.resolve(r);
+  else parkedAnswers.set(askKey(q.agent, q.question), { answer: r.answer, at: Date.now() });
+  q.resolve = null;
+}
+
+/** Hands the request back as "pending" after a while, leaving the question where it is. */
+function armDetach(q: Ask, wait?: AskWait): void {
+  clearTimeout(q.detachTimer);
+  if (!wait?.detachAfterSec) return;
+  q.detachTimer = setTimeout(() => {
+    if (!q.resolve) return;
+    q.resolve({ answer: null, pending: true });
+    q.resolve = null;
+  }, wait.detachAfterSec * 1000);
+}
 const MAX_QUEUED = 5;
 const askQueue: Ask[] = [];
 let currentAsk: Ask | null = null;
@@ -408,9 +439,9 @@ let currentAsk: Ask | null = null;
 const xmlEscape = (s: string) =>
   s.replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[c]!);
 
-/** A Windows toast with the two answers as buttons. Each button opens an agentbuddy:// link. */
+/** A Windows toast with the answers as buttons. Each button opens an agentbuddy:// link. */
 function askToastXml(q: Ask): string {
-  const link = (choice: 0 | 1) => xmlEscape(`${PROTOCOL}://answer/${choice}?n=${q.nonce}`);
+  const link = (choice: number) => xmlEscape(`${PROTOCOL}://answer/${choice}?n=${q.nonce}`);
   return (
     `<toast scenario="reminder" activationType="protocol" launch="${PROTOCOL}://show">` +
     `<visual><binding template="ToastGeneric">` +
@@ -420,8 +451,7 @@ function askToastXml(q: Ask): string {
     (q.freeText
       ? ""
       : `<actions>` +
-        `<action content="${xmlEscape(q.options[0])}" activationType="protocol" arguments="${link(0)}"/>` +
-        `<action content="${xmlEscape(q.options[1])}" activationType="protocol" arguments="${link(1)}"/>` +
+        q.options.map((o, i) => `<action content="${xmlEscape(o)}" activationType="protocol" arguments="${link(i)}"/>`).join("") +
         `</actions>`) +
     `</toast>`
   );
@@ -430,7 +460,7 @@ function askToastXml(q: Ask): string {
 function presentAsk(q: Ask): void {
   currentAsk = q;
   stopDemo();
-  setState("needsYou", q.question, q.agent, q.options, undefined, { input: q.freeText, canRemember: !q.freeText });
+  setState("needsYou", q.question, q.agent, q.options, undefined, { input: q.freeText, canRemember: !q.freeText && !q.list, list: q.list, other: q.allowOther });
   note(q.agent, "needsYou", q.question);
   overlay?.showInactive();
   if (dndOn()) dndTally.questions += 1;
@@ -454,12 +484,13 @@ function settleAsk(q: Ask, label: string | null): void {
   if (label === null) {
     setState("idle", "Question timed out (no answer)", q.agent);
     note(q.agent, "timedOut", "No answer in time");
-    q.resolve({ answer: null, timedOut: true });
+    deliver(q, { answer: null, timedOut: true });
   } else {
-    const shown = q.freeText ? `You answered: ${label.slice(0, 60)}` : `You chose "${label}"`;
+    const typed = q.freeText || !q.options.includes(label);
+    const shown = typed ? `You answered: ${label.slice(0, 60)}` : `You chose "${label.slice(0, 60)}"`;
     setState("working", shown, q.agent);
     note(q.agent, "answered", shown);
-    q.resolve({ answer: label, timedOut: false });
+    deliver(q, { answer: label, timedOut: false });
   }
   showNextAsk();
 }
@@ -470,7 +501,7 @@ function showNextAsk(): void {
     clearTimeout(q.timer);
     if (q.deadline - Date.now() < 3000) { // too late to be answered
       setState("idle", "Question timed out (no answer)", q.agent);
-      q.resolve({ answer: null, timedOut: true });
+      deliver(q, { answer: null, timedOut: true });
       continue;
     }
     presentAsk(q);
@@ -479,10 +510,23 @@ function showNextAsk(): void {
   syncAnswerShortcuts();
 }
 
-function askUserQueued(a: AskUserArgs): Promise<AskUserResult> {
+function askUserQueued(a: AskUserArgs, wait?: AskWait): Promise<AskUserResult> {
   return new Promise((resolve) => {
     const agent = agentKey(a.agent);
     const freeText = a.free_text === true;
+    // The same question asked again: the agent is still waiting for an answer it was told was pending.
+    const key = askKey(agent, a.question);
+    for (const [k, v] of parkedAnswers) if (Date.now() - v.at > PARKED_KEEP_MS) parkedAnswers.delete(k);
+    const parked = parkedAnswers.get(key);
+    if (parked) {
+      parkedAnswers.delete(key);
+      return resolve({ answer: parked.answer, timedOut: parked.answer === null });
+    }
+    const open = [currentAsk, ...askQueue].find((x) => x && !x.resolve && askKey(x.agent, x.question) === key);
+    if (open) {
+      open.resolve = resolve;
+      return armDetach(open, wait);
+    }
     // An answer the user asked to be remembered is given at once, without showing the question.
     const rule = freeText ? undefined : findRule(agent, a.question);
     if (rule) {
@@ -492,15 +536,20 @@ function askUserQueued(a: AskUserArgs): Promise<AskUserResult> {
       return resolve({ answer: rule.answer, timedOut: false });
     }
     if (askQueue.length >= MAX_QUEUED) return resolve({ answer: null, busy: true });
+    const options = a.options && a.options.length >= 2 ? a.options.slice(0, 4) : ["Approve", "Deny"];
+    const allowOther = a.allow_other === true && !freeText;
     const q: Ask = {
       agent,
       question: a.question,
-      options: a.options?.length === 2 ? [a.options[0], a.options[1]] : ["Approve", "Deny"],
+      options,
+      list: !freeText && (options.length > 2 || allowOther || options.some((o) => o.length > BUTTON_LABEL_MAX)),
+      allowOther,
       freeText,
       deadline: Date.now() + (a.timeout_sec ?? 120) * 1000,
       nonce: crypto.randomBytes(12).toString("hex"),
       resolve,
     };
+    armDetach(q, wait);
     if (!currentAsk) return presentAsk(q);
     // Wait in line; give up when its own time runs out.
     askQueue.push(q);
@@ -510,16 +559,17 @@ function askUserQueued(a: AskUserArgs): Promise<AskUserResult> {
       if (i < 0) return;
       askQueue.splice(i, 1);
       setState("idle", "Question timed out (no answer)", q.agent);
-      q.resolve({ answer: null, timedOut: true });
+      deliver(q, { answer: null, timedOut: true });
     }, Math.max(0, q.deadline - Date.now()));
   });
 }
 
 /** Answers the question on screen. A nonce, when given, must match (notification buttons). */
-function answerCurrent(choice: 0 | 1, nonce?: string, remember = false): boolean {
+function answerCurrent(choice: number, nonce?: string, remember = false): boolean {
   const q = currentAsk;
   if (!q || q.freeText || (nonce !== undefined && nonce !== q.nonce)) return false;
-  if (remember) rememberAnswer(q.agent, q.question, q.options[choice]);
+  if (!Number.isInteger(choice) || choice < 0 || choice >= q.options.length) return false;
+  if (remember && !q.list) rememberAnswer(q.agent, q.question, q.options[choice]);
   settleAsk(q, q.options[choice]);
   return true;
 }
@@ -528,7 +578,7 @@ function answerCurrent(choice: 0 | 1, nonce?: string, remember = false): boolean
 function answerWithText(text: string): boolean {
   const q = currentAsk;
   const clean = text.replace(/\s+/g, " ").trim().slice(0, 500);
-  if (!q || !q.freeText || clean.length === 0) return false;
+  if (!q || !(q.freeText || q.allowOther) || clean.length === 0) return false;
   settleAsk(q, clean);
   return true;
 }
@@ -550,7 +600,7 @@ const backend: BuddyBackend = {
     note(key, state, message ?? "");
     if (overlay && !overlay.isDestroyed() && !overlay.isVisible()) overlay.showInactive();
   },
-  askUser: (a) => askUserQueued(a),
+  askUser: (a, wait) => askUserQueued(a, wait),
 };
 
 // ---------- Answering without the mouse ----------
@@ -561,19 +611,24 @@ const KEY_FIRST = "Control+Alt+Y";
 const KEY_SECOND = "Control+Alt+N";
 const KEY_TOGGLE = "Control+Alt+B";
 const KEY_PANEL = "Control+Alt+H";
-let answerKeysOn = false;
+let answerKeysFor = ""; // the question the answer keys are registered for
 
 function syncAnswerShortcuts(): void {
   // Not for typed answers: there is nothing a single key could choose.
   const want = currentAsk !== null && !currentAsk.freeText && loadAppSettings().shortcuts !== false;
-  if (want === answerKeysOn) return;
-  answerKeysOn = want;
-  if (want) {
+  // Which keys are wanted depends on the question, so compare the question too.
+  const sig = want && currentAsk ? currentAsk.nonce : "";
+  if (sig === answerKeysFor) return;
+  answerKeysFor = sig;
+  // A list is answered by number (Ctrl+Alt+1 to 4); two buttons by Y and N.
+  const digits = [1, 2, 3, 4].map((n) => `Control+Alt+${n}`);
+  for (const k of [KEY_FIRST, KEY_SECOND, ...digits]) globalShortcut.unregister(k);
+  if (!want || !currentAsk) return;
+  if (currentAsk.list) {
+    currentAsk.options.forEach((_o, i) => globalShortcut.register(digits[i], () => { answerCurrent(i); }));
+  } else {
     globalShortcut.register(KEY_FIRST, () => { answerCurrent(0); });
     globalShortcut.register(KEY_SECOND, () => { answerCurrent(1); });
-  } else {
-    globalShortcut.unregister(KEY_FIRST);
-    globalShortcut.unregister(KEY_SECOND);
   }
 }
 
@@ -598,7 +653,7 @@ function handleProtocolUrl(raw: string): void {
   try { url = new URL(raw); } catch { return; }
   if (url.protocol !== `${PROTOCOL}:`) return;
   if (url.hostname === "answer") {
-    const choice = url.pathname === "/1" ? 1 : url.pathname === "/0" ? 0 : null;
+    const choice = /^\/[0-3]$/.test(url.pathname) ? Number(url.pathname.slice(1)) : null;
     const nonce = url.searchParams.get("n") ?? "";
     // The one-time code means a link from a web page or another app cannot answer for the user.
     if (choice !== null && nonce.length > 0) answerCurrent(choice, nonce);
@@ -1168,6 +1223,7 @@ async function snapshotAll(dir: string): Promise<void> {
   for (const [name, act] of [
     ["ask-always", () => setState("needsYou", "Send the daily report?", "Scout", ["Send", "Don't send"], undefined, { canRemember: true })],
     ["ask-text", () => setState("needsYou", "Which row should I update?", "Atlas", undefined, undefined, { input: true })],
+    ["ask-list", () => { void overlay?.webContents.executeJavaScript("bots.clear(); window.clearTimeout(reactionTimer); reaction = \"none\"; body.dataset.reaction = \"none\"; refresh();").then(() => setState("needsYou", "Row 516 went to the wrong company. How should I handle it?", "Atlas", ["Clone it into the right company and delete the copy", "Clone it and keep the copy", "I'll fix it myself; carry on with the rest"], undefined, { list: true, other: true })); }],
   ] as const) {
     act();
     await wait(1300);
@@ -1224,7 +1280,7 @@ async function recordDemo(dir: string): Promise<void> {
   const loop = (async () => {
     while (recording) {
       const t0 = Date.now();
-      frames.push({ t: t0 - start, png: (await win.webContents.capturePage()).toPNG() });
+      frames.push({ t: t0 - start, png: (await win.webContents.capturePage({ x: 0, y: 0, width: OVERLAY_WIDTH, height: 300 })).toPNG() });
       const left = 70 - (Date.now() - t0);
       if (left > 0) await wait(left);
     }
@@ -1240,7 +1296,10 @@ async function recordDemo(dir: string): Promise<void> {
     [1300, () => setState("finished", "Summary sent to Sam", "Scout")],
     [2300, () => setState("needsYou", "Allow this command? (deletes files)", "Claude Code", ["Approve", "Deny"])],
     [2600, () => setState("working", "You chose \"Deny\"", "Claude Code")],
-    [1300, () => setState("error", "Couldn't reach the server", "Juno")],
+    [1500, () => setState("working", "Creating objects 6-12 of 30", "Atlas")],
+    [1900, () => setState("needsYou", "Row 516 went to the wrong company. How should I handle it?", "Atlas", ["Clone it into the right company and delete the copy", "Clone it and keep the copy", "I'll fix it myself; carry on with the rest"], undefined, { list: true, other: true })],
+    [3800, () => setState("working", "You chose \"Clone it and keep the copy\"", "Atlas")],
+    [1500, () => setState("error", "Couldn't reach the server", "Juno")],
     [2400, () => setState("finished", "All 42 tests pass", "Claude Code")],
     [2600, () => {}],
   ];
@@ -1291,10 +1350,10 @@ if (!gotLock) {
     ipcMain.on("buddy:needs-you", (_e, on: boolean) => {
       tray?.setImage(makeTrayIcon(on === true));
     });
-    ipcMain.on("buddy:decision", (_e, choice: 0 | 1) => {
+    ipcMain.on("buddy:decision", (_e, choice: unknown) => {
       stopDemo();
       if (currentAsk?.freeText) return; // a typed answer is expected
-      if (answerCurrent(choice === 1 ? 1 : 0)) return;
+      if (currentAsk) { answerCurrent(typeof choice === "number" ? choice : 0); return; }
       // No real question waiting: this was the tray demo.
       setState(choice === 0 ? "working" : "idle", choice === 0 ? "Approved, continuing…" : "Denied. Agent stopped.");
     });
@@ -1351,6 +1410,7 @@ if (!gotLock) {
       dev: process.env.AGENT_BUDDY_DEV === "1"
         ? {
             click: (c) => void overlay?.webContents.executeJavaScript(`document.getElementById(${JSON.stringify(c === 2 ? "always" : c === 0 ? "approve" : "deny")}).click()`),
+            clickOption: (i) => void overlay?.webContents.executeJavaScript(`document.getElementById(${JSON.stringify(i < 0 ? "opt-other" : `opt-${i}`)}).click()`),
             typeAnswer: (text) => void overlay?.webContents.executeJavaScript(`(() => { document.getElementById("reply-text").value = ${JSON.stringify(text)}; document.getElementById("reply").requestSubmit(); })()`),
             snapshot: async () => (await overlay!.webContents.capturePage()).toPNG(),
             currentAsk: () => (currentAsk ? { agent: currentAsk.agent, nonce: currentAsk.nonce, queued: askQueue.length } : null),

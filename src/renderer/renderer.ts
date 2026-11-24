@@ -15,7 +15,7 @@ type Reaction = "none" | "annoyed" | "slap" | "dizzy";
 type Mood = AgentState | Exclude<Reaction, "none">;
 
 interface BuddyApi {
-  onState(cb: (s: { state: AgentState; text?: string; agent?: string; options?: [string, string]; next?: string; input?: boolean; canRemember?: boolean }) => void): void;
+  onState(cb: (s: { state: AgentState; text?: string; agent?: string; options?: string[]; next?: string; input?: boolean; canRemember?: boolean; list?: boolean; other?: boolean }) => void): void;
   onReact(cb: (r: { reaction: Exclude<Reaction, "none">; ms?: number }) => void): void;
   onCursor(cb: (p: { x: number; y: number }) => void): void;
   reportPillRect(r: { x: number; y: number; width: number; height: number }): void;
@@ -23,7 +23,7 @@ interface BuddyApi {
   setNeedsYou(on: boolean): void;
   onSettings(cb: (s: { sounds?: boolean; volume?: number; lingerFinishedMin?: number; glass?: boolean; colours?: Record<string, string>; quiet?: boolean }) => void): void;
   onPlaySound(cb: (name: string) => void): void;
-  decide(choice: 0 | 1): void;
+  decide(choice: number): void;
   decideAlways(): void;
   answerText(text: string): void;
 }
@@ -361,12 +361,14 @@ interface Bot {
   text: string;
   prevText: string;
   nextText: string;
-  options?: [string, string];
+  options?: string[];
   changedAt: number;
   updatedAt: number;
   startedAt: number; // when the current task began, for the elapsed time
   input?: boolean;       // the question wants a typed answer
   canRemember?: boolean; // the question can offer "Always"
+  list?: boolean;        // the answers show as a lettered list instead of two buttons
+  other?: boolean;       // the list ends with "Something else" (a typed answer)
 }
 
 const STALE_AFTER_MIN = 5; // a working bot that has said nothing for this long is flagged
@@ -406,8 +408,8 @@ function prune(now: number): void {
 }
 
 function setAgentState(
-  state: AgentState, text?: string, agent?: string, options?: [string, string], next?: string,
-  ask?: { input?: boolean; canRemember?: boolean },
+  state: AgentState, text?: string, agent?: string, options?: string[], next?: string,
+  ask?: { input?: boolean; canRemember?: boolean; list?: boolean; other?: boolean },
 ): void {
   stir();
   const name = agent ?? DEFAULT_NAME;
@@ -425,6 +427,8 @@ function setAgentState(
     key, name, state, options, prevText, nextText,
     input: state === "needsYou" && ask?.input === true,
     canRemember: state === "needsYou" && ask?.canRemember === true,
+    list: state === "needsYou" && ask?.list === true,
+    other: state === "needsYou" && ask?.other === true,
     text: newText,
     changedAt: changed ? now : prev!.changedAt,
     updatedAt: now,
@@ -559,12 +563,19 @@ function refresh(): void {
 
   approveBtn.textContent = lead.options?.[0] ?? "Approve";
   denyBtn.textContent = lead.options?.[1] ?? "Deny";
-  // Which answer controls show: two buttons, two buttons plus "Always", or a text box.
-  const askMode = lead.state !== "needsYou" ? "" : lead.input ? "text" : lead.canRemember ? "choice-remember" : "choice";
+  // Which answer controls show: two buttons, two buttons plus "Always", a lettered
+  // list, or a text box (asked for outright, or after "Something else" in a list).
+  const askSig = lead.state === "needsYou" ? `${lead.key}|${lead.text}` : "";
+  if (askSig !== typingOtherFor) typingOtherFor = "";
+  const askMode = lead.state !== "needsYou" ? ""
+    : lead.input || typingOtherFor ? "text"
+    : lead.list ? "list"
+    : lead.canRemember ? "choice-remember" : "choice";
   if (body.dataset.ask !== askMode) {
     body.dataset.ask = askMode;
     replyInput.value = "";
   }
+  renderChoices(askMode === "list" ? lead : null);
   alwaysBtn.textContent = `Always “${lead.options?.[0] ?? "Approve"}” for this question`;
 
   const sig = `${lead.key}|${lead.state}`;
@@ -871,6 +882,44 @@ function updateEngagement(p: { x: number; y: number }, faceRect: DOMRect): void 
   }
 }
 
+// ---------- A question with a list of answers ----------
+const choicesEl = document.getElementById("choices") as HTMLElement;
+let typingOtherFor = ""; // the question whose "Something else" was chosen, so the text box shows
+let choicesShown = "";
+
+function renderChoices(b: Bot | null): void {
+  const sig = b ? JSON.stringify([b.key, b.text, b.options, b.other]) : "";
+  if (sig === choicesShown) return;
+  choicesShown = sig;
+  choicesEl.replaceChildren();
+  if (!b) return;
+  const row = (id: string, badge: string, label: string, onClick: () => void) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "choice";
+    btn.id = id;
+    const k = document.createElement("span");
+    k.className = "key";
+    k.textContent = badge;
+    const l = document.createElement("span");
+    l.className = "label";
+    l.textContent = label;
+    btn.append(k, l);
+    btn.title = label;
+    btn.addEventListener("click", onClick);
+    choicesEl.appendChild(btn);
+  };
+  (b.options ?? []).forEach((label, i) => row(`opt-${i}`, String(i + 1), label, () => window.buddy.decide(i)));
+  if (b.other) {
+    row("opt-other", "…", "Something else", () => {
+      typingOtherFor = `${b.key}|${b.text}`;
+      refresh();
+      replyInput.focus();
+    });
+    choicesEl.lastElementChild?.classList.add("other");
+  }
+}
+
 approveBtn.addEventListener("click", () => window.buddy.decide(0));
 denyBtn.addEventListener("click", () => window.buddy.decide(1));
 alwaysBtn.addEventListener("click", () => window.buddy.decideAlways());
@@ -892,7 +941,17 @@ replyForm.addEventListener("submit", (ev) => {
 // handler once swallowed "y", "n" and Enter in the text box.)
 window.addEventListener("keydown", (ev) => {
   if (lead.state !== "needsYou" || lead.input) return;
-  if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) return;
+  if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement) {
+    // Escape in the "Something else" box goes back to the list.
+    if (ev.key === "Escape" && typingOtherFor) { typingOtherFor = ""; refresh(); }
+    return;
+  }
+  if (lead.list) {
+    // A list is answered by its number.
+    const n = Number(ev.key);
+    if (Number.isInteger(n) && n >= 1 && n <= (lead.options?.length ?? 0)) { ev.preventDefault(); window.buddy.decide(n - 1); }
+    return;
+  }
   if (ev.key === "Enter" || ev.key === "y" || ev.key === "Y") {
     ev.preventDefault();
     window.buddy.decide(0);
@@ -908,7 +967,7 @@ function reportRect(): void {
 }
 new ResizeObserver(reportRect).observe(pill);
 
-window.buddy.onState(({ state, text, agent, options, next, input, canRemember }) => setAgentState(state, text, agent, options, next, { input, canRemember }));
+window.buddy.onState(({ state, text, agent, options, next, input, canRemember, list, other }) => setAgentState(state, text, agent, options, next, { input, canRemember, list, other }));
 window.buddy.onReact(({ reaction: r, ms }) => react(r, ms ?? 1500));
 window.buddy.onSettings((s) => {
   quiet = s.quiet === true;

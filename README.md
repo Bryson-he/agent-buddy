@@ -16,14 +16,14 @@ Works with Claude Code, Cursor, Grok Bot, and anything that speaks MCP.
 
 </div>
 
-<img src="docs/images/states.png" alt="Six views of the notch: working, needs you, finished, several agents, a risky command, and idle" />
+<img src="docs/images/states.png" alt="Six views of the notch: working, needs you, finished, several agents, a risky command, and a question with a list of choices" />
 
 ## Why
 
 Agents work for minutes at a time, and you end up checking their window to see whether they are done, stuck, or waiting for you. Agent Buddy keeps that answer on screen: a black notch at the top centre of your display, with a character that works, celebrates, frets and dozes along with your agents.
 
 - **See it at a glance.** Each agent's current step, the one before it, how long it has been going, and whether it has gone quiet.
-- **Answer from anywhere.** When an agent asks, answer on the notch, with `Ctrl+Alt+Y` / `Ctrl+Alt+N`, or from the Windows notification. Typed answers and "always answer this way" are there too.
+- **Answer from anywhere.** When an agent asks, answer on the notch, with a shortcut, or from the Windows notification. Yes or no, a pick from up to four choices, or a typed answer, plus "always answer this way".
 - **Several agents at once.** One leads, the rest stay in view. Each has its own colour, and Claude Code and Cursor get their own character.
 - **Out of your way.** Move the cursor onto the notch and it turns see-through and lets clicks through. Touch the character's face to wake it.
 - **Private by default.** A local server on `127.0.0.1`. Nothing leaves your PC unless you switch on the tunnel for a cloud bot.
@@ -59,6 +59,11 @@ set_status { "state": "working", "message": "Updating the tracker", "next": "Ema
 
 // Ask the person and wait. Two buttons, or free_text for a typed answer.
 ask_user { "question": "Send the email to Sam?", "options": ["Send", "Don't send"], "agent": "Scout" }
+
+// Up to four choices show as a numbered list; allow_other adds "Something else" with a text box.
+ask_user { "question": "Row 516 went to the wrong company. How should I handle it?",
+           "options": ["Clone it and delete the copy", "Clone it and keep the copy", "I'll fix it myself"],
+           "allow_other": true, "agent": "Atlas" }
 ```
 
 You can try it without any agent:
@@ -79,6 +84,7 @@ Invoke-RestMethod http://127.0.0.1:47821/api/status -Method Post -ContentType 'a
 | Shortcut | Does |
 |---|---|
 | `Ctrl+Alt+Y` / `Ctrl+Alt+N` | Answer the question on screen (first / second button) |
+| `Ctrl+Alt+1` to `Ctrl+Alt+4` | Pick from a list of choices |
 | `Ctrl+Alt+B` | Show or hide the notch |
 | `Ctrl+Alt+H` | Open Activity |
 

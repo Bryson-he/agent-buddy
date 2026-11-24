@@ -43,7 +43,7 @@ Things to know:
 
 - **Treat the header value like a password.** Anyone with it and the address can show statuses and ask you questions. Tray → **Rotate connector token** makes a new one; update the connector afterwards.
 - **A quick tunnel's address is random** and changes after a reboot or when the tunnel is switched off. Then the connector has to be removed and added again with the new address.
-- **Questions through the tunnel wait at most 85 seconds,** because Cloudflare drops a request that has been silent for 100.
+- **A slow answer is fine.** Cloudflare drops a request that has been silent for 100 seconds, so after 85 the bot is told the question is still waiting and asks again. The question stays on your screen the whole time (5 minutes unless the bot sets `timeout_sec`, 10 at most) and is never shown twice.
 - In Grok Bot, a connector's URL cannot be edited: uninstall it and add it again. After re-adding one mid-conversation, a bot's next tool call can fail once with a "server changed" message; it clears on the next message.
 - If bots go quiet, look in `%APPDATA%\agent-buddy\activity.log` for `"result":401`: that means the token saved in the connector is wrong.
 
@@ -81,7 +81,9 @@ For agents that can only launch a command, use **Copy connector config (command 
 | Tool | Arguments |
 |---|---|
 | `set_status` | `state` (`working`, `finished`, `error`, `upload`, `idle`, `greeting`), `message?`, `next?`, `agent?` |
-| `ask_user` | `question`, `options?` (two button labels), `free_text?` (typed answer), `agent?`, `timeout_sec?` |
+| `ask_user` | `question`, `options?` (two to four answers), `allow_other?` (adds "Something else" with a text box), `free_text?` (typed answer only), `agent?`, `timeout_sec?` |
+
+Two short options show as buttons. Three or four, any option longer than 24 characters, or `allow_other` turns the question into a numbered list.
 
 `agent` is the name shown on the notch. It picks the colour and keeps each agent's line separate.
 
@@ -94,4 +96,4 @@ Invoke-RestMethod http://127.0.0.1:47821/api/status -Method Post -ContentType 'a
 Invoke-RestMethod http://127.0.0.1:47821/api/ask -Method Post -ContentType 'application/json' -Body '{"question":"Delete the old backups?","options":["Delete","Keep"],"agent":"Nightly job"}'
 ```
 
-`/api/ask` answers with `{ "answer", "timedOut", "busy" }`.
+`/api/ask` answers with `{ "answer", "timedOut", "busy", "pending" }`.

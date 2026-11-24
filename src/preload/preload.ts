@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld("buddy", {
   onSettings: (cb: (s: unknown) => void) => ipcRenderer.on("buddy:settings", (_e, s) => cb(s)),
   onPlaySound: (cb: (name: string) => void) => ipcRenderer.on("buddy:play-sound", (_e, n) => cb(String(n))),
   setNeedsYou: (on: boolean) => ipcRenderer.send("buddy:needs-you", on === true),
-  decide: (choice: 0 | 1) => ipcRenderer.send("buddy:decision", choice),
+  decide: (choice: number) => ipcRenderer.send("buddy:decision", choice),
   decideAlways: () => ipcRenderer.send("buddy:decision-always"),
   answerText: (text: string) => ipcRenderer.send("buddy:text-answer", String(text)),
 });

@@ -53,7 +53,7 @@ To restart during development, stop the running copy first: the app holds a sing
 Two MCP tools (`src/mcp/tools.ts`):
 
 - `set_status { state, message?, next?, agent? }`. States: `working`, `finished`, `error`, `upload`, `idle`, `greeting`.
-- `ask_user { question, options?[2], free_text?, agent?, timeout_sec? }`. Waits for the answer. Returns the chosen label or typed text, or says it timed out or the queue was full.
+- `ask_user { question, options?[2..4], allow_other?, free_text?, agent?, timeout_sec? }`. Waits for the answer. Returns the chosen label or typed text, or says it timed out, the queue was full, or the question is still pending.
 
 `agent` is the display name; `keyOf()` normalises it ("Claude Code" → `claudecode`).
 
@@ -63,7 +63,7 @@ Ways in: local HTTP MCP (`/mcp`, stateless streamable HTTP), the stdio bridge, t
 
 - Binds to `127.0.0.1` only. Any request with an `Origin` header is refused.
 - A request is "remote" if its Host is not local or it carries `cf-ray`, `cf-connecting-ip` or `x-forwarded-for`. Remote requests reach only `/mcp`, only with `Authorization: Bearer <token>` (constant-time compare), rate-limited.
-- Remote questions are capped at 85 s (`REMOTE_ASK_MAX_SEC`): Cloudflare drops a request silent for 100 s.
+- A remote request is handed back as `pending` after 85 s (`REMOTE_ASK_MAX_SEC`), because Cloudflare drops a request silent for 100 s. The question stays up; the agent asks again with the same question and re-attaches (see Questions).
 - Dev endpoints exist only with `AGENT_BUDDY_DEV=1`, never through the tunnel. `AGENT_BUDDY_TOKEN` is honoured only in dev mode too.
 - The activity log never contains the token. The token is copied to the clipboard by main, never sent to a page.
 
@@ -71,12 +71,17 @@ Ways in: local HTTP MCP (`/mcp`, stateless streamable HTTP), the stdio bridge, t
 
 `askUserQueued` in `main.ts`: one question on screen, up to 5 waiting; a question's timeout covers its whole wait; a full queue answers `busy`. Ways to answer: the notch buttons, `Ctrl+Alt+Y` / `Ctrl+Alt+N` (registered only while a two-button question shows), the toast buttons (`agentbuddy://answer/<0|1>?n=<nonce>`, received in `second-instance`; the nonce is per question), a typed answer (`free_text`), or a remembered answer ("Always": one agent + one exact question, stored in `rules.json`).
 
+**Lists.** More than two options, any option longer than `BUTTON_LABEL_MAX`, or `allow_other` makes the question a numbered list (`Ask.list`; `renderChoices` in `renderer.ts`, `.choices` in `style.css`). Answered by click, the keys 1 to 4, `Ctrl+Alt+1..4`, or the toast buttons. "Something else" swaps the list for the text box. "Always" is offered only for two-button questions.
+
+**Pending.** `askUserQueued(a, wait)` takes `wait.detachAfterSec`. When it passes, the request resolves with `pending: true` and `Ask.resolve` becomes null, but the question stays on screen or in the queue until its deadline. The same agent asking the same question again re-attaches to it. An answer given while nothing is attached is kept in `parkedAnswers` for 15 minutes and handed over on the next ask. Only tunnelled requests detach; in dev mode `/api/ask?detach_sec=N` does the same for tests.
+
 ## The notch
 
 - **Agents:** a map keyed by normalised name. The lead is ranked: pinned, needs you, changed in the last 5 s, error, working / upload / greeting, finished, idle. Others show as small faces (compact) or pills (expanded).
 - **Sizes:** expanded for a few seconds after a change, while an agent needs you, during a reaction, or while the cursor is on the face. Otherwise compact.
 - **Glass mode:** cursor on the notch but not the face makes it see-through and click-through; touching the face wakes it. Stays solid while asking. The `glass` setting turns this off (then the notch is solid whenever the cursor is on it). The renderer decides and tells main through `buddy:interactive`.
 - **Character:** one shaded body per agent; colour is the main difference (`COLOURS` in `shared.ts`, overridable per agent through the `agentColours` setting). Body styles: `ball`, `block` (Claude Code, with limbs), `hex` (Cursor). All motion is spring-driven in `frame()` (`Spring` class, `EYE` shapes, `eyeOnBall`, `enterState`), and the loop sleeps when everything has settled. Idle personality (glances, dozing) is timer-driven in `idleTick`.
+- **Small faces** (the other agents) are animated with CSS only (`mini-*` keyframes at the end of `style.css`), keyed on each chip's `data-state`. They use the `scale` property for blinking because the eyes already carry an SVG `transform`.
 - **Motion can only be judged by eye.** Snapshots show poses, not feel. Tune spring stiffness and damping from feedback.
 
 ## Settings and data

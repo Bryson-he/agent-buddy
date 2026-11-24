@@ -13,6 +13,8 @@ const MAX_BODY = 64 * 1024;
 const REMOTE_WINDOW_MS = 60_000;
 const REMOTE_MAX_PER_WINDOW = 120;
 const REMOTE_ASK_MAX_SEC = 85;
+/** How long a tunnelled question stays on screen when the agent does not say (it re-asks to keep waiting). */
+const REMOTE_ASK_DEFAULT_SEC = 300;
 
 const statusSchema = z.object(statusShape);
 const askSchema = z.object(askShape);
@@ -69,6 +71,8 @@ class RateLimiter {
 export interface DevHooks {
   /** 0 = first answer, 1 = second answer, 2 = "Always" (first answer, remembered). */
   click(choice: 0 | 1 | 2): void;
+  /** Clicks a row of a list question: 0 to 3, or -1 for "Something else". */
+  clickOption(index: number): void;
   typeAnswer(text: string): void;
   snapshot(): Promise<Buffer>;
   /** The question on screen, with its one-time code, so tests can use a notification link. */
@@ -96,10 +100,10 @@ export function startBuddyServer(realBackend: BuddyBackend, opts: ServerOptions)
   };
   const backend: BuddyBackend = {
     setStatus: async (a) => { log({ tool: "set_status", ...a }); await realBackend.setStatus(a); },
-    askUser: async (a) => {
-      log({ tool: "ask_user", agent: a.agent, question: a.question });
-      const r = await realBackend.askUser(a);
-      log({ tool: "ask_user:answer", agent: a.agent, answer: r.answer, timedOut: r.timedOut, busy: r.busy });
+    askUser: async (a, wait) => {
+      log({ tool: "ask_user", agent: a.agent, question: a.question, options: a.options?.length });
+      const r = await realBackend.askUser(a, wait);
+      log({ tool: "ask_user:answer", agent: a.agent, answer: r.answer, timedOut: r.timedOut, busy: r.busy, pending: r.pending });
       return r;
     },
   };
@@ -136,10 +140,11 @@ export function startBuddyServer(realBackend: BuddyBackend, opts: ServerOptions)
         const body = req.method === "POST" ? await readBody(req) : undefined;
         const rpc = body as { method?: string; params?: { name?: string } } | undefined;
         log({ http: "mcp", via: isRemote(req) ? "tunnel" : "local", method: req.method, rpc: rpc?.method, name: rpc?.params?.name });
-        // Cloudflare drops a tunnelled request that has sent nothing for 100 s, so a
-        // question asked through the tunnel must be answered or time out before then.
+        // Cloudflare drops a tunnelled request that has sent nothing for 100 s. So a
+        // request through the tunnel is handed back as "pending" before then, while the
+        // question stays on screen; the agent asks again to keep waiting.
         const forThisRequest: BuddyBackend = isRemote(req)
-          ? { setStatus: backend.setStatus, askUser: (a) => backend.askUser({ ...a, timeout_sec: Math.min(a.timeout_sec ?? REMOTE_ASK_MAX_SEC, REMOTE_ASK_MAX_SEC) }) }
+          ? { setStatus: backend.setStatus, askUser: (a) => backend.askUser({ ...a, timeout_sec: a.timeout_sec ?? REMOTE_ASK_DEFAULT_SEC }, { detachAfterSec: REMOTE_ASK_MAX_SEC }) }
           : backend;
         // Stateless: a fresh MCP server per request keeps concurrent agents independent.
         const mcp = createBuddyMcpServer(forThisRequest);
@@ -160,12 +165,15 @@ export function startBuddyServer(realBackend: BuddyBackend, opts: ServerOptions)
       if (req.method === "POST" && url.pathname === "/api/ask") {
         const parsed = askSchema.safeParse(await readBody(req));
         if (!parsed.success) return send(res, 400, { error: parsed.error.message });
-        const result = await backend.askUser(parsed.data);
+        // Dev mode only: "detach_sec" hands the request back early as "pending", the way the tunnel does.
+        const detach = dev ? Number(url.searchParams.get("detach_sec")) : 0;
+        const result = await backend.askUser(parsed.data, detach > 0 ? { detachAfterSec: detach } : undefined);
         // Machine-readable for Cursor / Claude Code hooks.
         return send(res, 200, {
           answer: result.answer,
           timedOut: result.timedOut === true,
           busy: result.busy === true,
+          pending: result.pending === true,
           chosen: result.answer,
         });
       }
@@ -174,6 +182,11 @@ export function startBuddyServer(realBackend: BuddyBackend, opts: ServerOptions)
       if (dev && req.method === "POST" && url.pathname === "/api/dev/click") {
         const body = (await readBody(req)) as { choice?: number } | undefined;
         dev.click(body?.choice === 2 ? 2 : body?.choice === 1 ? 1 : 0);
+        return send(res, 200, { ok: true });
+      }
+      if (dev && req.method === "POST" && url.pathname === "/api/dev/option") {
+        const body = (await readBody(req)) as { index?: number } | undefined;
+        dev.clickOption(Number.isInteger(body?.index) ? (body!.index as number) : 0);
         return send(res, 200, { ok: true });
       }
       if (dev && req.method === "POST" && url.pathname === "/api/dev/text") {

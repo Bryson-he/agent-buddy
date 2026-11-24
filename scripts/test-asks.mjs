@@ -11,6 +11,8 @@ let failures = 0;
 const check = (name, ok, detail = "") => { console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`); if (!ok) failures++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ask = (body) => fetch(`${BASE}/api/ask`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
+const askDetached = (body, sec) => fetch(`${BASE}/api/ask?detach_sec=${sec}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
+const option = (index) => fetch(`${BASE}/api/dev/option`, { method: "POST", body: JSON.stringify({ index }) });
 const click = (choice) => fetch(`${BASE}/api/dev/click`, { method: "POST", body: JSON.stringify({ choice }) });
 const current = () => fetch(`${BASE}/api/dev/ask`).then((r) => r.json()).then((j) => j.ask);
 const openLink = (url) => spawn("cmd", ["/c", "start", "", url], { windowsHide: true, stdio: "ignore" });
@@ -109,7 +111,52 @@ await fetch(`${BASE}/api/dev/text`, { method: "POST", body: JSON.stringify({ tex
 const rt = await Promise.race([typed, sleep(5000).then(() => null)]);
 check("the typed text comes back, tidied", rt?.answer === "Row 12, please", JSON.stringify(rt));
 
-// 7. The Activity panel's history saw all of it.
+// 7. A list of answers: three choices plus "Something else".
+const LIST = ["Change company and delete the Restricted copy, then continue", "Change company and keep the copy, then continue", "I'll fix it myself; keep going on the others"];
+const list1 = ask({ question: "How should I handle object 123 (row 516)?", options: LIST, allow_other: true, agent: "Test L", timeout_sec: 20 });
+await sleep(900);
+await option(1);
+const rl1 = await Promise.race([list1, sleep(5000).then(() => null)]);
+check("a list question returns the row that was clicked", rl1?.answer === LIST[1], JSON.stringify(rl1));
+const list2 = ask({ question: "How should I handle object 124?", options: LIST, allow_other: true, agent: "Test L", timeout_sec: 20 });
+await sleep(900);
+await option(-1); // "Something else" opens the text box
+await sleep(400);
+await fetch(`${BASE}/api/dev/text`, { method: "POST", body: JSON.stringify({ text: "Skip it for now" }) });
+const rl2 = await Promise.race([list2, sleep(5000).then(() => null)]);
+check("\"Something else\" returns what was typed", rl2?.answer === "Skip it for now", JSON.stringify(rl2));
+const list3 = ask({ question: "Pick one of four", options: ["One", "Two", "Three", "Four"], agent: "Test L", timeout_sec: 20 });
+await sleep(900);
+await fetch(`${BASE}/api/dev/text`, { method: "POST", body: JSON.stringify({ text: "typed" }) }).catch(() => {});
+await sleep(400);
+check("a list without \"Something else\" does not take typed text", (await current())?.agent === "Test L");
+openLink(`agentbuddy://answer/3?n=${(await current()).nonce}`);
+const rl3 = await Promise.race([list3, sleep(6000).then(() => null)]);
+check("a notification link can pick the fourth answer", rl3?.answer === "Four", JSON.stringify(rl3));
+const bad = await fetch(`${BASE}/api/ask`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: "Too many", options: ["1", "2", "3", "4", "5"], agent: "Test L" }) });
+check("more than four answers is refused", bad.status === 400);
+
+// 8. A slow answer: the request is handed back as "pending", the question stays up, asking again picks it up.
+const SLOW = { question: "Slow one: which way?", options: ["Left", "Right", "Straight on"], agent: "Test P", timeout_sec: 60 };
+const p1 = await askDetached(SLOW, 3);
+check("a request is handed back as pending, not timed out", p1.pending === true && p1.answer === null && p1.timedOut === false, JSON.stringify(p1));
+check("the question is still on screen", (await current())?.agent === "Test P");
+const p2wait = askDetached(SLOW, 30);
+await sleep(700);
+check("asking again does not show it twice", (await current())?.queued === 0, JSON.stringify(await current()));
+await option(2);
+const p2 = await Promise.race([p2wait, sleep(5000).then(() => null)]);
+check("asking again gets the answer", p2?.answer === "Straight on" && p2?.pending === false, JSON.stringify(p2));
+// Answered while nobody was waiting: the next ask gets it at once.
+const p3 = await askDetached({ ...SLOW, question: "Slow two: which way?" }, 3);
+check("second slow question goes pending", p3.pending === true);
+await option(0);
+await sleep(500);
+const t3 = Date.now();
+const p4 = await askDetached({ ...SLOW, question: "Slow two: which way?" }, 30);
+check("an answer given in between is handed over at once", p4.answer === "Left" && Date.now() - t3 < 1500 && (await current()) === null, JSON.stringify(p4));
+
+// 9. The Activity panel's history saw all of it.
 const hist = (await fetch(`${BASE}/api/history`).then((r) => r.json())).bots;
 const botT = hist.find((b) => b.name === "Test T");
 check("history records the question and the answer", botT?.events.some((e) => e.kind === "needsYou") && botT?.events.some((e) => e.kind === "answered" && /Row 12/.test(e.text)), JSON.stringify(botT?.events?.map((e) => e.kind)));

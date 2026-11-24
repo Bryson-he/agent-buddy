@@ -188,8 +188,58 @@ body[data-state="needsYou"] .actions { display: flex; animation: rise 320ms var(
   padding: 0 10px;
   transition: transform 160ms var(--spring), filter 120ms;
 }
-/* A typed answer replaces the two buttons */
-body[data-ask="text"] .actions { display: none; }
+/* A typed answer, or a list of answers, replaces the two buttons */
+body[data-ask="text"] .actions, body[data-ask="list"] .actions { display: none; }
+
+/* A list of answers: one row each, numbered, with room for a full sentence */
+body[data-ask="list"], body[data-ask="text"] { --w: 400px; }
+.choices { display: none; flex-direction: column; gap: 5px; padding: 2px 0 12px 62px; -webkit-app-region: no-drag; }
+body[data-ask="list"] .choices { display: flex; animation: rise 320ms var(--ease); }
+.choice {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px 6px 6px;
+  border: 0;
+  border-radius: 12px;
+  background: #1d1e23;
+  color: var(--text);
+  font: 12px/16px "Segoe UI", system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms var(--spring), background 120ms;
+}
+.choice .key {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -1px;
+  border-radius: 6px;
+  background: #2f3138;
+  color: #b9bec9;
+  font: 600 11px/18px "Segoe UI", system-ui, sans-serif;
+  text-align: center;
+}
+.choice .label { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.choice:first-child { background: #f2f3f5; color: #0b0b0d; }
+.choice:first-child .key { background: #d5d7dc; color: #33363d; }
+.choice.other { background: none; color: #8f96a3; }
+.choice.other .key { background: none; border: 1px dashed #4a4d56; line-height: 16px; }
+.choice:hover { transform: scale(1.015); filter: brightness(1.12); }
+.choice.other:hover { color: var(--text); }
+.choice:active { transform: scale(0.985); }
+.choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The question itself may need more than one line when the answers are sentences */
+body[data-ask="list"] .status, body[data-ask="text"] .status {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+/* The other bots step aside while a list is up: the notch is tall enough already */
+body[data-ask="list"] .list { display: none !important; }
 
 /* "Always": a quiet link under the buttons that remembers the first answer */
 .always-row { display: none; padding: 0 0 10px 62px; margin-top: -6px; }
@@ -412,3 +462,25 @@ body[data-size="expanded"] .list:not(:empty) { display: grid; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
 }
+
+/* ---------- The small faces move too ----------
+   Cheap CSS loops (no script): each small face bobs, blinks or shakes according
+   to its bot's state, a little out of step with its neighbours. */
+.chip .face.mini, .item .face.mini { transform-origin: 50% 85%; animation: mini-idle 4.6s ease-in-out infinite; }
+.face.mini .eyep { transform-box: fill-box; transform-origin: center; animation: mini-blink 4.2s infinite; }
+:is(.chip, .item)[data-state="working"] .face.mini { animation: mini-bob 1.25s ease-in-out infinite; }
+:is(.chip, .item)[data-state="upload"] .face.mini { animation: mini-bob 0.8s ease-in-out infinite; }
+:is(.chip, .item)[data-state="finished"] .face.mini { animation: mini-cheer 2.8s var(--spring) infinite; }
+:is(.chip, .item)[data-state="error"] .face.mini { animation: mini-shake 2.6s ease-in-out infinite; }
+:is(.chip, .item)[data-state="needsYou"] .face.mini { animation: mini-nudge 0.9s ease-in-out infinite; }
+:is(.chip, .item)[data-state="finished"] .eyep,
+:is(.chip, .item)[data-state="error"] .eyep { animation: none; }
+:is(.chip, .item):nth-child(2) .face.mini, :is(.chip, .item):nth-child(2) .eyep { animation-delay: -0.45s; }
+:is(.chip, .item):nth-child(3) .face.mini, :is(.chip, .item):nth-child(3) .eyep { animation-delay: -0.9s; }
+:is(.chip, .item):nth-child(4) .face.mini, :is(.chip, .item):nth-child(4) .eyep { animation-delay: -1.5s; }
+@keyframes mini-idle { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.03, 0.97); } }
+@keyframes mini-bob { 0%, 100% { transform: translateY(0) scale(1, 1); } 45% { transform: translateY(-2px) scale(0.97, 1.04); } 70% { transform: translateY(0) scale(1.05, 0.94); } }
+@keyframes mini-cheer { 0%, 62%, 100% { transform: translateY(0) rotate(0); } 70% { transform: translateY(-3px) rotate(-8deg); } 80% { transform: translateY(0) rotate(6deg); } 90% { transform: translateY(-1px) rotate(0); } }
+@keyframes mini-shake { 0%, 70%, 100% { transform: translateX(0); } 76% { transform: translateX(-1.6px); } 82% { transform: translateX(1.6px); } 88% { transform: translateX(-1px); } 94% { transform: translateX(1px); } }
+@keyframes mini-nudge { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
+@keyframes mini-blink { 0%, 91%, 100% { scale: 1 1; } 95% { scale: 1 0.12; } }
