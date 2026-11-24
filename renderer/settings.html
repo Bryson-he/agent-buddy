@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>Settings · Agent Buddy</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Settings</h1>
+      <span id="saved" class="saved" role="status"></span>
+    </header>
+
+    <main>
+      <section>
+        <h2>Sound</h2>
+        <label class="row">
+          <span class="label">Play sounds<small>When a bot needs you, finishes or hits an error</small></span>
+          <input id="sounds" type="checkbox" class="switch" />
+        </label>
+        <label class="row">
+          <span class="label">Volume</span>
+          <span class="range"><input id="volume" type="range" min="0" max="100" step="5" /><output id="volume-out" for="volume"></output></span>
+        </label>
+        <div class="row">
+          <span class="label">Try them</span>
+          <span class="buttons">
+            <button type="button" data-sound="needsYou">Needs you</button>
+            <button type="button" data-sound="finished">Finished</button>
+            <button type="button" data-sound="error">Error</button>
+          </span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Getting your attention</h2>
+        <label class="row">
+          <span class="label">Windows notifications<small>With answer buttons when a bot asks a question</small></span>
+          <input id="notifications" type="checkbox" class="switch" />
+        </label>
+        <label class="row">
+          <span class="label">Keyboard shortcuts<small id="keys-hint"></small></span>
+          <input id="shortcuts" type="checkbox" class="switch" />
+        </label>
+      </section>
+
+      <section>
+        <h2>The notch</h2>
+        <label class="row">
+          <span class="label">Screen<small>Which monitor the notch sits on</small></span>
+          <select id="display"></select>
+        </label>
+        <label class="row">
+          <span class="label">Keep a finished bot for</span>
+          <select id="linger">
+            <option value="1">1 minute</option>
+            <option value="5">5 minutes</option>
+            <option value="15">15 minutes</option>
+            <option value="60">1 hour</option>
+          </select>
+        </label>
+        <label class="row">
+          <span class="label">See-through on hover<small>The notch fades and lets clicks through when the cursor is on it. Off: it stays solid.</small></span>
+          <input id="glass" type="checkbox" class="switch" />
+        </label>
+      </section>
+
+      <section>
+        <h2>Agent colours</h2>
+        <p id="agents-empty" class="hint">No agents yet. Once one has reported, you can pick its colour here.</p>
+        <div id="agents"></div>
+      </section>
+
+      <section>
+        <h2>Remembered answers</h2>
+        <p id="rules-empty" class="hint">None yet. Choose “Always…” under a bot's question and it will be answered that way from then on, without asking.</p>
+        <div id="rules"></div>
+      </section>
+
+      <section>
+        <h2>Startup</h2>
+        <label class="row">
+          <span class="label">Start with Windows</span>
+          <input id="startWithWindows" type="checkbox" class="switch" />
+        </label>
+      </section>
+    </main>
+    <script src="../dist/renderer/shared.js"></script>
+    <script src="../dist/renderer/settings.js"></script>
+  </body>
+</html>

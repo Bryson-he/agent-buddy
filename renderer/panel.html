@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>Activity · Agent Buddy</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Activity</h1>
+      <p>What each bot is doing, and what it has done today.</p>
+    </header>
+    <p id="empty" class="empty" hidden>No bot has reported yet. They appear here as soon as one starts working.</p>
+    <main id="bots"></main>
+    <script src="../dist/renderer/shared.js"></script>
+    <script src="../dist/renderer/panel.js"></script>
+  </body>
+</html>

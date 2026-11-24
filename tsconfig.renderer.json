@@ -1,0 +1,15 @@
+{
+  // Browser-side scripts: plain <script> files (no imports), so they compile as scripts, not modules.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleDetection": "legacy",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "outDir": "dist/renderer",
+    "rootDir": "src/renderer",
+    "strict": true,
+    "skipLibCheck": true,
+    "sourceMap": true
+  },
+  "include": ["src/renderer/**/*.ts"]
+}

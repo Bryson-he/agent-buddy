@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+release/
+*.log
+.env
+.env.*
+
+# Private notes and local pictures
+CLAUDE.local.md
+shots/
+*.bak

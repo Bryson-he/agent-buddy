@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; media-src 'self'" />
+    <title>Agent Buddy</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body data-state="idle" data-reaction="none" data-size="expanded">
+    <!-- The notch: flush with the top edge of the screen. Compact = a face and one line;
+         expanded = bigger face, agent name, steps, and buttons when the agent needs you. -->
+    <div class="notch" id="pill">
+      <div class="row">
+        <!-- The character: one shaded ball with two eyes. All of its motion is
+             driven from renderer.ts (springs), so states flow into each other. -->
+        <svg class="face" id="face" viewBox="-14 -14 92 92" role="img" aria-label="Agent Buddy">
+          <defs>
+            <!-- Soft light from the top-left makes the circle read as a ball -->
+            <radialGradient id="g-shade" gradientUnits="userSpaceOnUse" cx="21" cy="15" r="58">
+              <stop offset="0" stop-color="#fff" stop-opacity="0.6" />
+              <stop offset="0.42" stop-color="#fff" stop-opacity="0" />
+              <stop offset="1" stop-color="#000" stop-opacity="0.32" />
+            </radialGradient>
+            <!-- State colour rising from the bottom: blue while working, red on error -->
+            <linearGradient id="g-wash-working" gradientUnits="userSpaceOnUse" x1="0" y1="62" x2="0" y2="18">
+              <stop offset="0" stop-color="#3b9bff" stop-opacity="0.95" /><stop offset="1" stop-color="#3b9bff" stop-opacity="0" />
+            </linearGradient>
+            <linearGradient id="g-wash-error" gradientUnits="userSpaceOnUse" x1="0" y1="62" x2="0" y2="12">
+              <stop offset="0" stop-color="#ff4a4a" stop-opacity="0.95" /><stop offset="1" stop-color="#ff4a4a" stop-opacity="0" />
+            </linearGradient>
+            <linearGradient id="g-wash-upload" gradientUnits="userSpaceOnUse" x1="0" y1="62" x2="0" y2="18">
+              <stop offset="0" stop-color="#22c3ee" stop-opacity="0.9" /><stop offset="1" stop-color="#22c3ee" stop-opacity="0" />
+            </linearGradient>
+          </defs>
+
+          <!-- Greeting sparkles -->
+          <g class="sparkles">
+            <circle cx="-6" cy="10" r="2" /><circle cx="70" cy="6" r="2.4" /><circle cx="74" cy="42" r="1.7" />
+            <circle cx="-9" cy="46" r="2.2" /><circle cx="14" cy="-9" r="1.6" /><circle cx="52" cy="-10" r="1.9" />
+          </g>
+
+          <g id="body">
+            <!-- The animated character: a ball for most agents, a block with arms and
+                 legs for Claude Code, a rounded hexagon for Cursor. The outline, limbs
+                 and eyes are set in renderer.ts. -->
+            <g class="avatar-ball" id="avatarBall">
+              <path class="shape base" />
+              <path class="shape wash" />
+              <path class="shape shade" />
+              <rect class="slot" x="13" y="12.5" width="38" height="7.5" rx="3.75" />
+              <path class="eyep" id="eyeL" />
+              <path class="eyep" id="eyeR" />
+            </g>
+          </g>
+
+          <!-- Dozing: little z's drift up when it has nodded off -->
+          <g class="zzz" aria-hidden="true">
+            <text x="52" y="12">z</text>
+            <text x="60" y="2">z</text>
+            <text x="67" y="-7">z</text>
+          </g>
+
+          <!-- Top-left: typing dots while working, "!" when it needs you,
+               a plain dot for finished (green) or error (red) -->
+          <g class="bubble">
+            <rect class="b-pill" x="-12" y="-9" width="30" height="18" rx="9" />
+            <circle class="b-dot" cx="3" cy="0" r="6" />
+            <g class="b-typing"><circle cx="-3" cy="0" r="2" /><circle cx="3" cy="0" r="2" /><circle cx="9" cy="0" r="2" /></g>
+            <path class="b-alert" d="M3 -4.6 L3 1 M3 4.4 L3 4.8" />
+          </g>
+        </svg>
+        <div class="text">
+          <div class="name" id="name">Agent Buddy</div>
+          <!-- Step ticker: the step before, dimmed, above the current one -->
+          <div class="prev" id="prev"></div>
+          <div class="status" id="status"></div>
+          <div class="next" id="next"></div>
+        </div>
+        <!-- Compact: the other bots as small faces -->
+        <div class="others" id="others"></div>
+      </div>
+      <div class="actions" id="actions">
+        <button class="btn approve" id="approve" type="button">Approve</button>
+        <button class="btn deny" id="deny" type="button">Deny</button>
+      </div>
+      <!-- "Always" remembers the first answer for this exact question from this bot -->
+      <div class="always-row" id="always-row">
+        <button class="always" id="always" type="button"></button>
+      </div>
+      <!-- A typed answer, when the bot asked for one -->
+      <form class="reply" id="reply">
+        <input id="reply-text" type="text" maxlength="500" autocomplete="off" spellcheck="true" placeholder="Type your answer…" />
+        <button class="btn approve" id="reply-send" type="submit">Send</button>
+      </form>
+      <!-- Expanded: the other bots as tinted pills, a face and the line each is working on -->
+      <div class="list" id="list"></div>
+    </div>
+    <script src="../dist/renderer/shared.js"></script>
+    <script src="../dist/renderer/renderer.js"></script>
+  </body>
+</html>

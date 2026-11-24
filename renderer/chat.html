@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>Ask Grok · Agent Buddy</title>
+    <link rel="stylesheet" href="chat.css" />
+  </head>
+  <body>
+    <section id="setup" class="setup" hidden>
+      <h1>Connect Grok</h1>
+      <p>Paste your xAI API key. You can create one in the xAI console. It is stored encrypted on this PC (Windows DPAPI via Electron safeStorage) and only sent to xAI.</p>
+      <label for="key">xAI API key</label>
+      <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="xai-…" />
+      <button id="save-key" type="button">Save and connect</button>
+      <p id="key-error" class="key-error" role="status"></p>
+    </section>
+
+    <section id="chat" class="chat" hidden>
+      <header>
+        <span>Ask Grok <small id="model"></small></span>
+        <span class="header-actions">
+          <button id="clear-chat" class="link" type="button">New chat</button>
+          <button id="change-key" class="link" type="button">Change key</button>
+        </span>
+      </header>
+      <div id="log" class="log" aria-live="polite"></div>
+      <form id="composer" class="composer">
+        <textarea id="input" rows="2" placeholder="Message Grok… (Enter to send)"></textarea>
+        <div class="composer-actions">
+          <button id="cancel" type="button" hidden>Cancel</button>
+          <button id="send" type="submit">Send</button>
+        </div>
+      </form>
+    </section>
+    <script src="../dist/renderer/chat.js"></script>
+  </body>
+</html>

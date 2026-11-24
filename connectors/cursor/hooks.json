@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "node connectors/cursor/hooks/before-shell.mjs",
+        "failClosed": false
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "node connectors/cursor/hooks/after-edit.mjs"
+      }
+    ],
+    "stop": [
+      {
+        "command": "node connectors/cursor/hooks/stop.mjs"
+      }
+    ]
+  }
+}

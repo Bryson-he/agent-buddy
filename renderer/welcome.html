@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>Quick start · Agent Buddy</title>
+    <link rel="stylesheet" href="settings.css" />
+    <link rel="stylesheet" href="welcome.css" />
+  </head>
+  <body class="welcome">
+    <nav id="wl-steps" aria-label="Steps">
+      <button type="button" data-step="0">Welcome</button>
+      <button type="button" data-step="1">Look</button>
+      <button type="button" data-step="2">Connect</button>
+      <button type="button" data-step="3">Let an AI do it</button>
+      <button type="button" data-step="4">Ready</button>
+    </nav>
+
+    <main id="wl-pages">
+      <!-- 1 -->
+      <section class="page" data-page="0">
+        <div class="hero">
+          <div class="buddy" aria-hidden="true"><span></span><span></span></div>
+          <h1>Meet Agent Buddy</h1>
+          <p class="lead">A small character at the top of your screen that shows what your AI agents are doing, and asks you when one of them needs a yes or no.</p>
+        </div>
+        <ul class="points">
+          <li><b>See it at a glance.</b> Working, finished, stuck or waiting for you, without opening the agent's window.</li>
+          <li><b>Answer from anywhere.</b> Click the notch, press a shortcut, or use the Windows notification.</li>
+          <li><b>Stays on this PC.</b> Nothing leaves your computer unless you switch on the tunnel for a cloud bot.</li>
+        </ul>
+        <div class="row plain">
+          <span class="label">See it move<small>Look at the top of your screen. The last step asks a question: answer it on the notch.</small></span>
+          <button type="button" id="wl-demo" class="primary">Play the demo</button>
+        </div>
+      </section>
+
+      <!-- 2 -->
+      <section class="page" data-page="1" hidden>
+        <h1>Make it yours</h1>
+        <p class="lead">Each switch saves as you change it. Everything here is also in Settings later.</p>
+        <div class="card">
+          <label class="row">
+            <span class="label">Screen<small>Which monitor the notch sits on</small></span>
+            <select id="wl-display"></select>
+          </label>
+          <label class="row">
+            <span class="label">See-through on hover<small>The notch fades and lets clicks through, so it never blocks what is behind it</small></span>
+            <input id="wl-glass" type="checkbox" class="switch" />
+          </label>
+          <label class="row">
+            <span class="label">Sounds<small>A soft note when a bot needs you, finishes or hits an error</small></span>
+            <span class="buttons"><button type="button" id="wl-try-sound">Try</button><input id="wl-sounds" type="checkbox" class="switch" /></span>
+          </label>
+          <label class="row">
+            <span class="label">Windows notifications<small>With answer buttons, when a bot asks a question</small></span>
+            <input id="wl-notifications" type="checkbox" class="switch" />
+          </label>
+          <label class="row">
+            <span class="label">Start with Windows</span>
+            <input id="wl-start" type="checkbox" class="switch" />
+          </label>
+        </div>
+        <p class="hint">Every agent gets its own colour. Once an agent has reported, you can change its colour in Settings.</p>
+      </section>
+
+      <!-- 3 -->
+      <section class="page" data-page="2" hidden>
+        <h1>Connect an agent</h1>
+        <p class="lead">Pick what you use. You can connect more than one, and come back here from the tray menu.</p>
+
+        <details class="card" name="wl-agent">
+          <summary><span class="dot claude"></span>Claude Code<small>Shows each step and asks before risky commands</small></summary>
+          <ol>
+            <li>Needs <b>Node.js</b> installed (the hooks are small Node scripts).</li>
+            <li>Copy the hooks block and merge it into <code>%USERPROFILE%\.claude\settings.json</code>.</li>
+            <li>Start a new Claude Code session. <code>/hooks</code> lists them.</li>
+          </ol>
+          <div class="actions"><button type="button" data-copy="claudeHooks">Copy hooks block</button><span class="or">or use "Let an AI do it"</span></div>
+        </details>
+
+        <details class="card" name="wl-agent">
+          <summary><span class="dot cursor"></span>Cursor<small>Shows shell commands and edits, asks before risky commands</small></summary>
+          <ol>
+            <li>Needs <b>Node.js</b> installed.</li>
+            <li>Copy the hooks file and save it as <code>%USERPROFILE%\.cursor\hooks.json</code> (merge if you already have one).</li>
+            <li>Restart Cursor.</li>
+          </ol>
+          <div class="actions"><button type="button" data-copy="cursorHooks">Copy hooks.json</button><span class="or">or use "Let an AI do it"</span></div>
+        </details>
+
+        <details class="card" name="wl-agent">
+          <summary><span class="dot cloud"></span>A cloud bot (Grok Bot and similar)<small>Bots that run on someone else's servers reach you through a secure tunnel</small></summary>
+          <ol>
+            <li>Install <b>cloudflared</b> (<code>winget install Cloudflare.cloudflared</code>), then switch the tunnel on:
+              <label class="inline"><input id="wl-tunnel" type="checkbox" class="switch" /> <span id="wl-tunnel-state">Off</span></label>
+            </li>
+            <li>In the bot's app, add a custom connector of type <b>Remote HTTPS</b> named <code>agent-buddy</code>:
+              <div class="actions">
+                <button type="button" data-copy="serverUrl">Copy server URL</button>
+                <button type="button" data-copy="headerKey">Copy header name</button>
+                <button type="button" data-copy="headerValue">Copy header value (secret)</button>
+              </div>
+            </li>
+            <li>Give each bot the skill that tells it to report. Type the bot's name, then copy:
+              <div class="actions"><input id="wl-bot-name" type="text" placeholder="Bot name" maxlength="40" /><button type="button" data-copy="skill">Copy skill text</button></div>
+            </li>
+          </ol>
+          <p class="hint">The tunnel address is random and changes after a restart unless you set up a fixed one. The README explains how. Treat the header value like a password.</p>
+        </details>
+
+        <details class="card" name="wl-agent">
+          <summary><span class="dot other"></span>Anything else that speaks MCP<small>Two tools: set_status and ask_user</small></summary>
+          <ol>
+            <li>Add Agent Buddy as an MCP server in your agent's config.</li>
+            <li>Tell the agent to call <code>set_status</code> as it works and <code>ask_user</code> before anything you would want to approve.</li>
+          </ol>
+          <div class="actions"><button type="button" data-copy="http">Copy config (URL)</button><button type="button" data-copy="stdio">Copy config (command)</button></div>
+        </details>
+      </section>
+
+      <!-- 4 -->
+      <section class="page" data-page="3" hidden>
+        <h1>Let an AI set it up</h1>
+        <p class="lead">Paste this into <b>Claude Code</b> or <b>Cursor</b> on this PC. It backs up your config, adds the hooks, tests the connection and tells you what it changed.</p>
+        <textarea id="wl-prompt" readonly spellcheck="false" aria-label="Setup prompt"></textarea>
+        <div class="actions">
+          <button type="button" data-copy="aiPrompt" class="primary">Copy the prompt</button>
+          <span class="or">The paths inside are already filled in for this PC.</span>
+        </div>
+      </section>
+
+      <!-- 5 -->
+      <section class="page" data-page="4" hidden>
+        <h1>You're set</h1>
+        <p class="lead">Agent Buddy lives in the tray, next to the clock. Right-click its icon for everything.</p>
+        <div class="card keys">
+          <div class="row"><span class="label">Answer a question</span><span><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Y</kbd> first answer &nbsp; <kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>N</kbd> second</span></div>
+          <div class="row"><span class="label">Show or hide the notch</span><span><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>B</kbd></span></div>
+          <div class="row"><span class="label">What every bot has been doing</span><span><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>H</kbd></span></div>
+          <div class="row"><span class="label">Wake the notch</span><span>Touch the character's face</span></div>
+          <div class="row"><span class="label">Tease it</span><span>Click the face. Three times makes it dizzy.</span></div>
+        </div>
+        <div class="actions">
+          <button type="button" data-open="settings">Open Settings</button>
+          <button type="button" data-open="activity">Open Activity</button>
+        </div>
+        <p class="hint">This guide is under Quick start in the tray menu whenever you want it again.</p>
+      </section>
+    </main>
+
+    <footer>
+      <span id="wl-toast" class="saved" role="status"></span>
+      <button type="button" id="wl-back">Back</button>
+      <button type="button" id="wl-next" class="primary">Next</button>
+    </footer>
+    <script src="../dist/renderer/welcome.js"></script>
+  </body>
+</html>
