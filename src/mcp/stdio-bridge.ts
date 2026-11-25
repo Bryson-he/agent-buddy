@@ -3,7 +3,7 @@
 // (Grok Bot "STDIO" connectors, Cursor, Claude Code). It forwards every tool
 // call to the running Agent Buddy app on 127.0.0.1.
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createBuddyMcpServer, type AskUserArgs, type AskUserResult, type BuddyBackend, type SetStatusArgs } from "./tools.js";
+import { createBuddyMcpServer, type AskUserArgs, type AskUserResult, type BuddyBackend, type RemindArgs, type SetStatusArgs } from "./tools.js";
 
 const BASE = process.env.AGENT_BUDDY_URL ?? "http://127.0.0.1:47821";
 
@@ -23,7 +23,14 @@ async function post<T>(route: string, body: unknown): Promise<T> {
 }
 
 const backend: BuddyBackend = {
-  setStatus: async (a: SetStatusArgs) => { await post("/api/status", a); },
+  setStatus: async (a: SetStatusArgs) => {
+    const r = await post<{ notes?: string[]; command?: "pause" | "stop" | null; away?: boolean }>("/api/status", a);
+    return { notes: r?.notes ?? [], command: r?.command ?? undefined, away: r?.away === true };
+  },
+  remindUser: async (a: RemindArgs) => {
+    const r = await post<{ at?: string | null }>("/api/remind", a);
+    return r?.at ? { at: Date.parse(r.at) } : null;
+  },
   askUser: (a: AskUserArgs) => post<AskUserResult>("/api/ask", a),
 };
 

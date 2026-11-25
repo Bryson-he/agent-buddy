@@ -4,7 +4,7 @@
 import * as crypto from "crypto";
 import * as http from "http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createBuddyMcpServer, askShape, statusShape, type BuddyBackend } from "../mcp/tools.js";
+import { createBuddyMcpServer, askShape, remindShape, statusShape, type BuddyBackend } from "../mcp/tools.js";
 import { appendActivity, peekActivity } from "./activity.js";
 import { z } from "zod";
 
@@ -18,6 +18,7 @@ const REMOTE_ASK_DEFAULT_SEC = 300;
 
 const statusSchema = z.object(statusShape);
 const askSchema = z.object(askShape);
+const remindSchema = z.object(remindShape);
 
 function readBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -71,8 +72,16 @@ class RateLimiter {
 export interface DevHooks {
   /** 0 = first answer, 1 = second answer, 2 = "Always" (first answer, remembered). */
   click(choice: 0 | 1 | 2): void;
-  /** Clicks a row of a list question: 0 to 3, or -1 for "Something else". */
+  /** Clicks a row of a list question: 0 to 3, -1 for "Something else", -2 for a pick-several question's Send. */
   clickOption(index: number): void;
+  /** What the notch's Note box, Pause and Stop buttons do, for an agent by name. */
+  leave(agent: string, what: { note?: string; command?: "pause" | "stop" }): void;
+  /** Pretends the user has been idle this many seconds (-1 = use the real figure). */
+  setIdle(seconds: number): void;
+  /** Closes the app (a test copy tidying up after itself). */
+  quit(): void;
+  /** Handles an agentbuddy:// link as if Windows had passed it in. */
+  openLink(url: string): void;
   typeAnswer(text: string): void;
   snapshot(): Promise<Buffer>;
   /** The question on screen, with its one-time code, so tests can use a notification link. */
@@ -99,11 +108,24 @@ export function startBuddyServer(realBackend: BuddyBackend, opts: ServerOptions)
     appendActivity(opts.logFile, entry);
   };
   const backend: BuddyBackend = {
-    setStatus: async (a) => { log({ tool: "set_status", ...a }); await realBackend.setStatus(a); },
+    setStatus: async (a) => {
+      // The link's address stays out of the log: it can carry a private file's path.
+      log({ tool: "set_status", ...a, link: a.link ? "(link)" : undefined });
+      const reply = await realBackend.setStatus(a);
+      if (reply && (reply.notes.length > 0 || reply.command)) log({ tool: "set_status:reply", agent: a.agent, notes: reply.notes.length, command: reply.command });
+      return reply;
+    },
+    remindUser: realBackend.remindUser
+      ? async (a) => {
+          const set = await realBackend.remindUser!(a);
+          log({ tool: "remind_user", agent: a.agent, text: a.text, at: set ? new Date(set.at).toISOString() : null });
+          return set;
+        }
+      : undefined,
     askUser: async (a, wait) => {
       log({ tool: "ask_user", agent: a.agent, question: a.question, options: a.options?.length });
       const r = await realBackend.askUser(a, wait);
-      log({ tool: "ask_user:answer", agent: a.agent, answer: r.answer, timedOut: r.timedOut, busy: r.busy, pending: r.pending });
+      log({ tool: "ask_user:answer", agent: a.agent, answer: r.answer, timedOut: r.timedOut, busy: r.busy, pending: r.pending, away: r.away });
       return r;
     },
   };
@@ -144,7 +166,12 @@ export function startBuddyServer(realBackend: BuddyBackend, opts: ServerOptions)
         // request through the tunnel is handed back as "pending" before then, while the
         // question stays on screen; the agent asks again to keep waiting.
         const forThisRequest: BuddyBackend = isRemote(req)
-          ? { setStatus: backend.setStatus, askUser: (a) => backend.askUser({ ...a, timeout_sec: a.timeout_sec ?? REMOTE_ASK_DEFAULT_SEC }, { detachAfterSec: REMOTE_ASK_MAX_SEC }) }
+          ? {
+              setStatus: backend.setStatus,
+              remindUser: backend.remindUser,
+              // An agent in the cloud has a chat to fall back on, so it is told at once when the user is away.
+              askUser: (a) => backend.askUser({ ...a, timeout_sec: a.timeout_sec ?? REMOTE_ASK_DEFAULT_SEC }, { detachAfterSec: REMOTE_ASK_MAX_SEC, tellIfAway: true }),
+            }
           : backend;
         // Stateless: a fresh MCP server per request keeps concurrent agents independent.
         const mcp = createBuddyMcpServer(forThisRequest);
@@ -158,8 +185,15 @@ export function startBuddyServer(realBackend: BuddyBackend, opts: ServerOptions)
       if (req.method === "POST" && url.pathname === "/api/status") {
         const parsed = statusSchema.safeParse(await readBody(req));
         if (!parsed.success) return send(res, 400, { error: parsed.error.message });
-        await backend.setStatus(parsed.data);
-        return send(res, 200, { ok: true });
+        const reply = await backend.setStatus(parsed.data);
+        return send(res, 200, { ok: true, notes: reply ? reply.notes : [], command: reply?.command ?? null, away: reply ? reply.away : false });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/remind") {
+        const parsed = remindSchema.safeParse(await readBody(req));
+        if (!parsed.success) return send(res, 400, { error: parsed.error.message });
+        const set = backend.remindUser ? await backend.remindUser(parsed.data) : null;
+        return send(res, 200, { ok: set !== null, at: set ? new Date(set.at).toISOString() : null });
       }
 
       if (req.method === "POST" && url.pathname === "/api/ask") {
@@ -167,13 +201,16 @@ export function startBuddyServer(realBackend: BuddyBackend, opts: ServerOptions)
         if (!parsed.success) return send(res, 400, { error: parsed.error.message });
         // Dev mode only: "detach_sec" hands the request back early as "pending", the way the tunnel does.
         const detach = dev ? Number(url.searchParams.get("detach_sec")) : 0;
-        const result = await backend.askUser(parsed.data, detach > 0 ? { detachAfterSec: detach } : undefined);
+        const tellIfAway = dev !== undefined && url.searchParams.get("away") === "1";
+        const result = await backend.askUser(parsed.data, detach > 0 || tellIfAway ? { detachAfterSec: detach > 0 ? detach : undefined, tellIfAway } : undefined);
         // Machine-readable for Cursor / Claude Code hooks.
         return send(res, 200, {
           answer: result.answer,
           timedOut: result.timedOut === true,
           busy: result.busy === true,
           pending: result.pending === true,
+          away: result.away === true,
+          answers: result.answers ?? null,
           chosen: result.answer,
         });
       }
@@ -187,6 +224,29 @@ export function startBuddyServer(realBackend: BuddyBackend, opts: ServerOptions)
       if (dev && req.method === "POST" && url.pathname === "/api/dev/option") {
         const body = (await readBody(req)) as { index?: number } | undefined;
         dev.clickOption(Number.isInteger(body?.index) ? (body!.index as number) : 0);
+        return send(res, 200, { ok: true });
+      }
+      if (dev && req.method === "POST" && url.pathname === "/api/dev/leave") {
+        const body = (await readBody(req)) as { agent?: unknown; note?: unknown; command?: unknown } | undefined;
+        dev.leave(String(body?.agent ?? ""), {
+          note: typeof body?.note === "string" ? body.note : undefined,
+          command: body?.command === "pause" || body?.command === "stop" ? body.command : undefined,
+        });
+        return send(res, 200, { ok: true });
+      }
+      if (dev && req.method === "POST" && url.pathname === "/api/dev/link") {
+        const body = (await readBody(req)) as { url?: unknown } | undefined;
+        dev.openLink(String(body?.url ?? ""));
+        return send(res, 200, { ok: true });
+      }
+      if (dev && req.method === "POST" && url.pathname === "/api/dev/quit") {
+        send(res, 200, { ok: true });
+        setTimeout(() => dev.quit(), 100);
+        return;
+      }
+      if (dev && req.method === "POST" && url.pathname === "/api/dev/idle") {
+        const body = (await readBody(req)) as { seconds?: number } | undefined;
+        dev.setIdle(Number.isFinite(body?.seconds) ? (body!.seconds as number) : -1);
         return send(res, 200, { ok: true });
       }
       if (dev && req.method === "POST" && url.pathname === "/api/dev/text") {

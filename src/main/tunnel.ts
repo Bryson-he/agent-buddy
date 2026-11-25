@@ -54,6 +54,12 @@ export type AppSettings = {
   glass?: boolean;
   /** Colour per agent, keyed by the normalised name ("claudecode": "#d97757"). */
   agentColours?: Record<string, string>;
+  /** Minutes without mouse or keyboard before a bot is told the user is away. 0 = never. Default 5. */
+  awayAfterMin?: number;
+  /** Show the Rive version of the main character (trial). Default off. */
+  riveCharacter?: boolean;
+  /** Body shape per agent, keyed like agentColours ("atlas": "star"). */
+  agentShapes?: Record<string, string>;
   /** True once the quick start has been shown. */
   onboarded?: boolean;
 };

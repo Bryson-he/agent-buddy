@@ -6,7 +6,9 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-const BASE = "http://127.0.0.1:47821";
+const BASE = `http://127.0.0.1:${process.env.AGENT_BUDDY_PORT ?? 47821}`;
+// The folder the app under test keeps its data in (a test copy can have its own).
+const DATA = process.env.AGENT_BUDDY_DATA ?? path.join(process.env.APPDATA ?? "", "agent-buddy");
 let failures = 0;
 const check = (name, ok, detail = "") => { console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`); if (!ok) failures++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -15,7 +17,10 @@ const askDetached = (body, sec) => fetch(`${BASE}/api/ask?detach_sec=${sec}`, { 
 const option = (index) => fetch(`${BASE}/api/dev/option`, { method: "POST", body: JSON.stringify({ index }) });
 const click = (choice) => fetch(`${BASE}/api/dev/click`, { method: "POST", body: JSON.stringify({ choice }) });
 const current = () => fetch(`${BASE}/api/dev/ask`).then((r) => r.json()).then((j) => j.ask);
-const openLink = (url) => spawn("cmd", ["/c", "start", "", url], { windowsHide: true, stdio: "ignore" });
+// Through Windows for the real app; a test copy with its own data folder is not the registered handler, so it is handed the link directly.
+const openLink = (url) => process.env.AGENT_BUDDY_DATA
+  ? fetch(`${BASE}/api/dev/link`, { method: "POST", body: JSON.stringify({ url }) })
+  : spawn("cmd", ["/c", "start", "", url], { windowsHide: true, stdio: "ignore" });
 
 let up = false;
 for (let i = 0; i < 40 && !up; i++) { up = await fetch(`${BASE}/health`).then((r) => r.ok, () => false); if (!up) await sleep(500); }
@@ -74,7 +79,7 @@ const all = await Promise.all([hold, ...waiting]);
 check("every queued question was answered in turn", all.every((r) => r.answer === "Approve"), all.map((r) => r.answer).join(","));
 
 // 5. "Always": the remembered answer is given at once next time, for that exact question only.
-const rulesPath = path.join(process.env.APPDATA ?? "", "agent-buddy", "rules.json");
+const rulesPath = path.join(DATA, "rules.json");
 const dropTestRules = () => {
   try {
     const rules = JSON.parse(fs.readFileSync(rulesPath, "utf8"));
@@ -113,7 +118,7 @@ check("the typed text comes back, tidied", rt?.answer === "Row 12, please", JSON
 
 // 7. A list of answers: three choices plus "Something else".
 const LIST = ["Change company and delete the Restricted copy, then continue", "Change company and keep the copy, then continue", "I'll fix it myself; keep going on the others"];
-const list1 = ask({ question: "How should I handle object 123 (row 516)?", options: LIST, allow_other: true, agent: "Test L", timeout_sec: 20 });
+const list1 = ask({ question: "How should I handle object 123 (row 12)?", options: LIST, allow_other: true, agent: "Test L", timeout_sec: 20 });
 await sleep(900);
 await option(1);
 const rl1 = await Promise.race([list1, sleep(5000).then(() => null)]);
@@ -156,7 +161,75 @@ const t3 = Date.now();
 const p4 = await askDetached({ ...SLOW, question: "Slow two: which way?" }, 30);
 check("an answer given in between is handed over at once", p4.answer === "Left" && Date.now() - t3 < 1500 && (await current()) === null, JSON.stringify(p4));
 
-// 9. The Activity panel's history saw all of it.
+// 9. From the user back to a bot: a note, then Stop, ride back on the bot's next status update.
+const status = (body) => fetch(`${BASE}/api/status`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(async (r) => ({ http: r.status, ...(await r.json()) }));
+const devPost = (what, body) => fetch(`${BASE}/api/dev/${what}`, { method: "POST", body: JSON.stringify(body) });
+const s1 = await status({ state: "working", message: "Step one", agent: "Test N" });
+check("a status with nothing waiting comes back empty", s1.notes.length === 0 && s1.command === null, JSON.stringify(s1));
+await devPost("leave", { agent: "Test N", note: "  skip row 12,   do the north depot last " });
+await devPost("leave", { agent: "Test O", note: "for the other bot" });
+const s2 = await status({ state: "working", message: "Step two", agent: "Test N" });
+check("a note left for a bot comes back with its next update, tidied", s2.notes.length === 1 && s2.notes[0] === "skip row 12, do the north depot last", JSON.stringify(s2));
+const s3 = await status({ state: "working", message: "Step three", agent: "Test N" });
+check("a note is delivered once", s3.notes.length === 0);
+await devPost("leave", { agent: "Test N", command: "pause" });
+await devPost("leave", { agent: "Test N", command: "stop" });
+const s4 = await status({ state: "working", message: "Step four", agent: "Test N" });
+check("Stop comes back as a command (the later press wins)", s4.command === "stop", JSON.stringify(s4));
+const s5 = await status({ state: "working", message: "Elsewhere", agent: "Test O" });
+check("each bot only gets what was left for it", s5.notes.length === 1 && s5.notes[0] === "for the other bot" && s5.command === null, JSON.stringify(s5));
+
+// 10. Progress, urgency and a link on a status.
+const s6 = await status({ state: "working", message: "Creating objects", agent: "Test N", progress: { done: 12, total: 30 }, urgency: "quiet", link: "https://example.com/tracker", link_label: "Open tracker" });
+check("progress, urgency and a link are accepted", s6.http === 200, JSON.stringify(s6));
+const s7 = await status({ state: "working", message: "Bad link", agent: "Test N", link: "javascript:alert(1)" });
+check("a link that is not http(s) is refused", s7.http === 400);
+const s8 = await status({ state: "working", message: "Bad progress", agent: "Test N", progress: { done: 3, total: 0 } });
+check("progress out of zero is refused", s8.http === 400);
+
+// 11. Pick several, with details attached.
+const multi = ask({ question: "Which rows should I update?", options: ["Row 10", "Row 11", "Row 12"], multi_select: true, detail: "Row 10: North depot\nRow 11: East depot\nRow 12: West depot", agent: "Test M", timeout_sec: 20 });
+await sleep(900);
+await click(0); // a plain button press must not answer a pick-several question
+await sleep(300);
+check("a single press does not answer a pick-several question", (await current())?.agent === "Test M");
+await option(0);
+await option(2);
+await sleep(200);
+await option(-2); // Send
+const rm = await Promise.race([multi, sleep(5000).then(() => null)]);
+check("pick several returns every ticked row", Array.isArray(rm?.answers) && rm.answers.join("|") === "Row 10|Row 12" && rm.answer === "Row 10; Row 12", JSON.stringify(rm));
+
+// 12. Away: a bot with a chat to fall back on is told at once, and nothing is shown.
+await devPost("idle", { seconds: 3600 });
+const tAway = Date.now();
+const away = await fetch(`${BASE}/api/ask?away=1`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question: "Asked while away?", agent: "Test W", timeout_sec: 30 }) }).then((r) => r.json());
+check("an away user is reported at once, without showing the question", away.away === true && away.answer === null && Date.now() - tAway < 1500 && (await current()) === null, JSON.stringify(away));
+const sAway = await status({ state: "working", message: "Carrying on", agent: "Test W" });
+check("a status reply says the user is away", sAway.away === true);
+const local = ask({ question: "A local hook still waits", agent: "Test W", timeout_sec: 20 });
+await sleep(700);
+check("a local caller's question is still shown when away", (await current())?.agent === "Test W");
+await click(0);
+await local;
+await devPost("idle", { seconds: -1 });
+
+// 13. Reminders.
+const remind = (body) => fetch(`${BASE}/api/remind`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json());
+const r1 = await remind({ text: "Test reminder, ignore", in_minutes: 90, agent: "Test R" });
+check("a reminder in N minutes is set for the right time", r1.ok === true && Math.abs(Date.parse(r1.at) - (Date.now() + 90 * 60_000)) < 5000, JSON.stringify(r1));
+const r2 = await remind({ text: "Test reminder, ignore", at: "25:99", agent: "Test R" });
+check("a time that makes no sense is not set", r2.ok === false, JSON.stringify(r2));
+const r3 = await remind({ text: "Test reminder, ignore", at: "09:15", agent: "Test R" });
+const when = new Date(r3.at);
+check("a clock time means the next time it comes round", r3.ok === true && when.getHours() === 9 && when.getMinutes() === 15 && when.getTime() > Date.now() && when.getTime() < Date.now() + 86_400_000, JSON.stringify(r3));
+// Leave no test reminders behind.
+try {
+  const file = path.join(DATA, "reminders.json");
+  fs.writeFileSync(file, JSON.stringify(JSON.parse(fs.readFileSync(file, "utf8")).filter((r) => r.agent !== "Test R"), null, 2));
+} catch { /* nothing to tidy */ }
+
+// 14. The Activity panel's history saw all of it.
 const hist = (await fetch(`${BASE}/api/history`).then((r) => r.json())).bots;
 const botT = hist.find((b) => b.name === "Test T");
 check("history records the question and the answer", botT?.events.some((e) => e.kind === "needsYou") && botT?.events.some((e) => e.kind === "answered" && /Row 12/.test(e.text)), JSON.stringify(botT?.events?.map((e) => e.kind)));
@@ -165,7 +238,7 @@ check("history counts today's questions", botT?.today.questions === 1);
 await fetch(`${BASE}/api/status`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ state: "idle", agent: "Test A" }) });
 // Leave no test bots behind in the activity log (the Activity panel is rebuilt from it at start).
 try {
-  const logPath = path.join(process.env.APPDATA ?? "", "agent-buddy", "activity.log");
+  const logPath = path.join(DATA, "activity.log");
   const kept = fs.readFileSync(logPath, "utf8").split("\n").filter((l) => !/"agent":"(Test [A-Z]\d?|Key Test)"/.test(l));
   fs.writeFileSync(logPath, kept.join("\n"));
 } catch { /* nothing to tidy */ }

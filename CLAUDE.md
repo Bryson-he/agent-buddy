@@ -128,3 +128,38 @@ A desktop-control tool that hides windows of apps it has no access to will hide 
 - Plain language in anything the user reads. The notch has room for about 60 characters.
 - Never type or log secrets. The owner pastes tokens themselves.
 - Keep the two tools small. An agent should be able to use them from the one-line descriptions.
+
+## Rive character (trial)
+
+Settings > "New character (trial)" (`riveCharacter`, default off) swaps the lead character's drawn body for a Rive one. The bubble, sparkles and z's are still the SVG ones, and the small faces are unchanged.
+
+- **Source:** `rive/buddy/scene.rml`, a Rive CLI project. A "Buddy" view model (`color`, `lookX`, `lookY`, `state` 0 to 10) drives a state machine with two layers: Face (where the eyes sit, each pill's tilt and size, blinking, the colour wash) and Symbol (which part of each eye shows: the pill, a spinning ring while working, an X on error, a fade for the rising eyes on upload). The body never moves, by the owner's choice: all the animation is in the eyes and the colour. Every animation in a layer keys the same properties, so a state change blends all of them.
+- **In the app:** `renderer/rive/buddy.riv` (the export), `renderer/vendor/rive/` (Rive's web runtime and its wasm engine, MIT, copied from `node_modules/@rive-app/webgl2`), and `src/renderer/rive-face.ts`, which sends the colour, eye direction and state once a frame. The canvas sits in a `foreignObject` inside the face SVG, sized so its ball matches the drawn one. If loading fails, the drawn character stays.
+- **To change the character:** edit `scene.rml`, check with `rive . --verify`, `rive inspect . --summary` and frames from `rive . --commands` (`data state=3`, `advance 700ms`, `screenshot x.png`), then `rive . --publish` and copy `build/buddy.riv` to `renderer/rive/`. Read `rive/buddy/AGENTS.md` first; look types up with `rive schema`, never from memory.
+- **`--publish` needs `rive login`**, even with no scripts. On a free workspace the export carries Rive's splash screen, which shows for a moment when the file loads; a paid plan removes it.
+- The file has no scripts on purpose: scripts must be signed to load in the web runtime.
+- In this mode every agent is a ball. Claude Code's block and Cursor's hexagon have no Rive version yet.
+- `npx electron . --snapshot-dir=shots --rive` takes the pictures with the Rive character on.
+
+## Start with Windows: only the installed app registers
+
+A copy run from source never adds itself to Windows start-up (`setStartWithWindows` in `main.ts`); it only removes its own entry. It used to register itself whenever it ran, and after a restart Windows started it ahead of the installed app, which the single-instance lock then kept out. If the wrong copy is running, `GET /api/diagnostics` shows `"packaged": false`.
+
+## Two-way (v0.7.0)
+
+- **From the user back to an agent.** Nothing can be pushed into an agent, so a note, Pause or Stop waits in `outbox` (`main.ts`) and is returned in the result of that agent's next `set_status` (`takeOutbox`, `statusReplyText` in `tools.ts`). The notch shows "sent" until it is picked up (`buddy:outbox`). The Note, Pause and Stop buttons show for the lead agent while the cursor is on the notch; the note reuses the typed-answer box (`body[data-ask="note"]`).
+- **`set_status` extras:** `progress {done, total}` (a bar), `urgency` (`quiet` stays silent and small, `urgent` adds a sound and a notification), `link` + `link_label` (a button; the address is kept in main and opened by agent name, never sent to the page; http and https only).
+- **`ask_user` extras:** `multi_select` (rows tick on and off, then Send; the result has `answers`), `detail` (background behind a "Details" fold).
+- **Away.** `userAway()` reads `powerMonitor.getSystemIdleTime()` against the `awayAfterMin` setting (default 5, 0 = never). Only requests marked `tellIfAway` (the tunnel) are answered at once with `away`; local hooks still wait.
+- **`remind_user`:** stored in `reminders.json`, re-armed at start, shown as a question with "Got it" and "Snooze 10 min".
+- **A test copy beside the installed app:** with `AGENT_BUDDY_DEV=1`, `AGENT_BUDDY_DATA=<folder>` and `AGENT_BUDDY_PORT=<port>` a source copy uses its own data, lock and port and leaves the notification links alone. `scripts/test-asks.mjs` reads the same two variables; `POST /api/dev/quit` closes the copy.
+- **Shell heredocs can mangle backslashes** in patch scripts on this setup. Write such a script to a file with an editor, or build the character with `String.fromCharCode`.
+
+## Body shapes (v0.8.0)
+
+Thirteen body shapes: ball, cloud, square, sparkle, clover, drop, burst, egg, pill, triangle, house, star, hex (`SHAPE_NAMES` in `shared.ts`; the order is the number the Rive file expects). They are this project's own shapes, built from plain geometry. Do not trace another product's avatars.
+
+- **Per agent:** the `agentShapes` setting (keyed like `agentColours`), picked in Settings next to a palette of eleven colours (`PALETTE`). `bodyStyle(key)` in `renderer.ts` returns the picked shape, else the default (block for Claude Code, hex for Cursor, ball otherwise).
+- **Drawn character and small faces:** `shapeRadius(kind, angle)` gives each outline as a distance from the centre; `outline()` turns it into the 96-point path every body shares, so shapes still morph.
+- **Rive character:** the body is a `Solo` holding one parametric shape per body (ellipse, rectangle, polygon, star), switched by the view model's `shape` number through the Shape layer. The wash, shading and highlight are clipped to the Solo, so they follow whichever body shows. Rive ids cannot end in `:0`.
+- The colour key is the agent's name in lower case with only letters and digits (`colourKey` in `main.ts`, `keyOf` in the pages). Settings lists one row per key.

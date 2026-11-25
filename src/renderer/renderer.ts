@@ -15,13 +15,17 @@ type Reaction = "none" | "annoyed" | "slap" | "dizzy";
 type Mood = AgentState | Exclude<Reaction, "none">;
 
 interface BuddyApi {
-  onState(cb: (s: { state: AgentState; text?: string; agent?: string; options?: string[]; next?: string; input?: boolean; canRemember?: boolean; list?: boolean; other?: boolean }) => void): void;
+  onState(cb: (s: StatePayload) => void): void;
+  decideMulti(indexes: number[]): void;
+  leave(agent: string, what: { note?: string; command?: "pause" | "stop" }): void;
+  onOutbox(cb: (o: { agent: string; text: string }) => void): void;
+  openLink(agent: string): void;
   onReact(cb: (r: { reaction: Exclude<Reaction, "none">; ms?: number }) => void): void;
   onCursor(cb: (p: { x: number; y: number }) => void): void;
   reportPillRect(r: { x: number; y: number; width: number; height: number }): void;
   setInteractive(on: boolean): void;
   setNeedsYou(on: boolean): void;
-  onSettings(cb: (s: { sounds?: boolean; volume?: number; lingerFinishedMin?: number; glass?: boolean; colours?: Record<string, string>; quiet?: boolean }) => void): void;
+  onSettings(cb: (s: { sounds?: boolean; volume?: number; lingerFinishedMin?: number; glass?: boolean; rive?: boolean; colours?: Record<string, string>; shapes?: Record<string, string>; quiet?: boolean }) => void): void;
   onPlaySound(cb: (name: string) => void): void;
   decide(choice: number): void;
   decideAlways(): void;
@@ -75,18 +79,55 @@ const MOTION = {
  *  - "block": Claude Code's. A rounded block with small arms and legs and squarer eyes.
  *  - "hex": Cursor's. A rounded hexagon.
  */
-type BodyStyle = "ball" | "block" | "hex";
+type BodyStyle = "block" | ShapeName;
 function bodyStyle(key: string): BodyStyle {
+  const picked = shapeFor(key); // the owner's choice in Settings wins
+  if (picked) return picked;
   if (key === "claude" || key === "claudecode") return "block";
   if (key === "cursor") return "hex";
   return "ball";
 }
 /** How much of the eye's corner rounding each body keeps, and how far its eyes are lifted. */
-const EYE_ROUNDING: Record<BodyStyle, number> = { ball: 1, block: 0.32, hex: 0.62 };
-const EYE_LIFT: Record<BodyStyle, number> = { ball: 0, block: -2.5, hex: 0 };
+const ALL_STYLES: BodyStyle[] = ["block", ...SHAPE_NAMES];
+const EYE_ROUNDING = Object.fromEntries(ALL_STYLES.map((s) => [s, 1])) as Record<BodyStyle, number>;
+Object.assign(EYE_ROUNDING, { block: 0.32, hex: 0.62, square: 0.7 });
+const EYE_LIFT = Object.fromEntries(ALL_STYLES.map((s) => [s, 0])) as Record<BodyStyle, number>;
+Object.assign(EYE_LIFT, { block: -2.5, triangle: 5, house: 2, drop: 1 });
+
+/**
+ * The outline of the extra body shapes, as a distance from the centre for each
+ * angle. They are this project's own blob shapes: a circle with lobes, a
+ * superellipse, or a polygon softened towards a circle.
+ */
+function shapeRadius(kind: string, t: number): number | null {
+  const up = t + Math.PI / 2; // 0 when pointing straight up
+  const superE = (c: number, s: number, a: number, b: number, n: number) =>
+    1 / Math.pow(Math.pow(Math.abs(c) / a, n) + Math.pow(Math.abs(s) / b, n), 1 / n);
+  // A polygon with a corner at angle "turn", softened: mix 1 is the sharp polygon, 0 a circle.
+  const poly = (sides: number, turn: number, corner: number, mix: number) => {
+    const sector = (Math.PI * 2) / sides;
+    const a = (((up - turn) % sector) + sector) % sector;
+    const flat = (corner * Math.cos(sector / 2)) / Math.cos(a - sector / 2);
+    return flat * mix + 26.5 * (1 - mix);
+  };
+  switch (kind) {
+    case "cloud": return 25.6 + 2.3 * Math.cos(7 * up);
+    case "square": return superE(Math.cos(t - 0.12), Math.sin(t - 0.12), 25, 25, 5);
+    case "sparkle": return 17.5 + 11 * Math.pow(Math.abs(Math.cos(2 * t)), 1.5);
+    case "clover": return 24.5 + 3.8 * Math.cos(5 * up);
+    case "drop": return poly(3, 2.2, 36, 0.48);
+    case "burst": return 25.8 + 2.2 * Math.cos(9 * up);
+    case "egg": return superE(Math.cos(t), Math.sin(t), 23.5, 28.5, 2.2);
+    case "pill": return superE(Math.cos(t), Math.sin(t), 30, 21.5, 4);
+    case "triangle": return poly(3, 0, 35, 0.6);
+    case "house": return poly(5, 0, 31, 0.72);
+    case "star": return 23 + 5.2 * Math.cos(6 * up);
+    default: return null;
+  }
+}
 
 // All outlines use the same number of points so the body can morph between them.
-function outline(kind: "ball" | "tray" | "block" | "hex"): string {
+function outline(kind: string): string {
   const N = 96;
   const pts: string[] = [];
   const superellipse = (c: number, s: number, a: number, b: number, n: number) =>
@@ -102,13 +143,15 @@ function outline(kind: "ball" | "tray" | "block" | "hex"): string {
     const t = (i / N) * Math.PI * 2;
     const c = Math.cos(t);
     const s = Math.sin(t);
-    const r = kind === "ball" ? 28 : kind === "tray" ? superellipse(c, s, 29, 26, 7) : kind === "hex" ? hexagon(t) : superellipse(c, s, 25, 19.5, 6);
-    const cy = kind === "block" ? 29 : 32;
+    const extra = shapeRadius(kind, t);
+    const r = extra !== null ? extra : kind === "ball" ? 28 : kind === "tray" ? superellipse(c, s, 29, 26, 7) : kind === "hex" ? hexagon(t) : superellipse(c, s, 25, 19.5, 6);
+    const cy = kind === "block" ? 29 : kind === "triangle" ? 35 : 32;
     pts.push(`${(32 + r * c).toFixed(2)} ${(cy + r * s).toFixed(2)}`);
   }
   return `path("M${pts.join(" L")} Z")`;
 }
-const OUTLINE = { ball: outline("ball"), tray: outline("tray"), block: outline("block"), hex: outline("hex") };
+const OUTLINE: Record<string, string> = { tray: outline("tray") };
+for (const s of ALL_STYLES) OUTLINE[s] = outline(s);
 
 // The block character's arms and legs: [x, y, width, height]. Drawn behind the body.
 const BLOCK_LIMBS: [number, number, number, number][] = [
@@ -369,7 +412,20 @@ interface Bot {
   canRemember?: boolean; // the question can offer "Always"
   list?: boolean;        // the answers show as a lettered list instead of two buttons
   other?: boolean;       // the list ends with "Something else" (a typed answer)
+  multi?: boolean;       // several rows can be ticked, then Send
+  detail?: string;       // longer background to the question, behind "Details"
+  progress?: { done: number; total: number };
+  linkLabel?: string;    // the bot attached a link; this is its button's text
+  waiting?: string;      // a note, Pause or Stop left for this bot and not yet picked up
 }
+/** Everything a state message can carry, beyond the state and its text. */
+interface AskExtras {
+  input?: boolean; canRemember?: boolean; list?: boolean; other?: boolean; multi?: boolean; detail?: string;
+  progress?: { done: number; total: number }; urgency?: "quiet" | "normal" | "urgent"; linkLabel?: string; waiting?: string;
+}
+interface StatePayload extends AskExtras { state: AgentState; text?: string; agent?: string; options?: string[]; next?: string }
+let noteFor = "";                    // the bot (by key) a note is being typed for
+const multiPicked = new Set<number>(); // rows ticked in a pick-several question
 
 const STALE_AFTER_MIN = 5; // a working bot that has said nothing for this long is flagged
 let quiet = false;          // do not disturb: no auto-expanding (questions still expand)
@@ -409,7 +465,7 @@ function prune(now: number): void {
 
 function setAgentState(
   state: AgentState, text?: string, agent?: string, options?: string[], next?: string,
-  ask?: { input?: boolean; canRemember?: boolean; list?: boolean; other?: boolean },
+  ask?: AskExtras,
 ): void {
   stir();
   const name = agent ?? DEFAULT_NAME;
@@ -429,6 +485,11 @@ function setAgentState(
     canRemember: state === "needsYou" && ask?.canRemember === true,
     list: state === "needsYou" && ask?.list === true,
     other: state === "needsYou" && ask?.other === true,
+    multi: state === "needsYou" && ask?.multi === true,
+    detail: state === "needsYou" ? ask?.detail : undefined,
+    progress: ask?.progress,
+    linkLabel: ask?.linkLabel,
+    waiting: ask?.waiting ?? prev?.waiting ?? "",
     text: newText,
     changedAt: changed ? now : prev!.changedAt,
     updatedAt: now,
@@ -443,7 +504,12 @@ function setAgentState(
       if (bots.get(key)?.state === "greeting") setAgentState("idle", undefined, name);
     }, TIMING.greetingToIdle);
   }
-  if (changed) {
+  // quiet: a routine update stays silent and small. urgent: sound and a longer look, even with no change of state.
+  const urgency = ask?.urgency ?? "normal";
+  if (urgency === "urgent" && !quiet) {
+    bump(12_000);
+    playSound("needsYou");
+  } else if (changed && (urgency !== "quiet" || state === "needsYou")) {
     if (!quiet || state === "needsYou") bump(state === "error" ? TIMING.bumpError : TIMING.bumpDefault);
     playStateSound(state);
   }
@@ -494,6 +560,25 @@ function renderLead(): void {
       el.classList.add("tick");
     }
   }
+  // Progress, the bot's link, and the way to tell it something.
+  const asking = lead.state === "needsYou";
+  const p = lead.progress;
+  progressEl.hidden = !p || asking;
+  if (p) {
+    progressBar.style.width = `${Math.round((100 * p.done) / p.total)}%`;
+    progressLabel.textContent = `${p.done} of ${p.total}`;
+  }
+  linkBtn.hidden = !lead.linkLabel || asking;
+  linkBtn.textContent = `${lead.linkLabel ?? ""} ↗`;
+  const canSteer = lead.key !== DEFAULT_KEY && !asking && hovering && reaction === "none";
+  noteBtn.hidden = !canSteer;
+  pauseBtn.hidden = stopBtn.hidden = !(canSteer && (lead.state === "working" || lead.state === "upload"));
+  waitingEl.textContent = asking ? "" : lead.waiting ?? "";
+  body.dataset.tools = !asking && (!linkBtn.hidden || canSteer || waitingEl.textContent !== "") ? "1" : "0";
+  const hasDetail = asking && !!lead.detail;
+  if (detailEl.hidden === hasDetail) { detailEl.hidden = !hasDetail; detailEl.open = false; }
+  if (detailText.textContent !== (lead.detail ?? "")) detailText.textContent = lead.detail ?? "";
+
   const needs = lead.state === "needsYou" || [...bots.values()].some((b) => b.state === "needsYou");
   if (needs !== lastNeedsYou) {
     lastNeedsYou = needs;
@@ -567,7 +652,8 @@ function refresh(): void {
   // list, or a text box (asked for outright, or after "Something else" in a list).
   const askSig = lead.state === "needsYou" ? `${lead.key}|${lead.text}` : "";
   if (askSig !== typingOtherFor) typingOtherFor = "";
-  const askMode = lead.state !== "needsYou" ? ""
+  if (noteFor && (noteFor !== lead.key || lead.state === "needsYou")) noteFor = "";
+  const askMode = lead.state !== "needsYou" ? (noteFor ? "note" : "")
     : lead.input || typingOtherFor ? "text"
     : lead.list ? "list"
     : lead.canRemember ? "choice-remember" : "choice";
@@ -575,6 +661,7 @@ function refresh(): void {
     body.dataset.ask = askMode;
     replyInput.value = "";
   }
+  replyInput.placeholder = askMode === "note" ? `Note for ${lead.name}…` : "Type your answer…";
   renderChoices(askMode === "list" ? lead : null);
   alwaysBtn.textContent = `Always “${lead.options?.[0] ?? "Approve"}” for this question`;
 
@@ -594,7 +681,7 @@ let expandedUntil = 0;
 let hovering = false;
 
 function updateSize(): void {
-  const mustExpand = lead.state === "needsYou" || lead.state === "greeting" || reaction !== "none" || hovering;
+  const mustExpand = lead.state === "needsYou" || lead.state === "greeting" || reaction !== "none" || hovering || noteFor !== "";
   const size = mustExpand || performance.now() < expandedUntil ? "expanded" : "compact";
   if (body.dataset.size !== size) body.dataset.size = size;
 }
@@ -861,7 +948,7 @@ function updateEngagement(p: { x: number; y: number }, faceRect: DOMRect): void 
   const inPill = p.x >= pr.left && p.x <= pr.right && p.y >= pr.top && p.y <= pr.bottom;
   const pad = 3;
   const onFace = p.x >= faceRect.left - pad && p.x <= faceRect.right + pad && p.y >= faceRect.top - pad && p.y <= faceRect.bottom + pad;
-  const asking = lead.state === "needsYou";
+  const asking = lead.state === "needsYou" || noteFor !== "";
 
   if (!inPill) engaged = false;
   else if (onFace || asking || !glassOn) engaged = true;
@@ -879,6 +966,7 @@ function updateEngagement(p: { x: number; y: number }, faceRect: DOMRect): void 
     hovering = engaged;
     if (!hovering) bump(TIMING.bumpAfterLeave);
     updateSize();
+    refresh(); // the Note / Pause / Stop buttons show only while the cursor is on the notch
   }
 }
 
@@ -888,10 +976,12 @@ let typingOtherFor = ""; // the question whose "Something else" was chosen, so t
 let choicesShown = "";
 
 function renderChoices(b: Bot | null): void {
-  const sig = b ? JSON.stringify([b.key, b.text, b.options, b.other]) : "";
+  const sig = b ? JSON.stringify([b.key, b.text, b.options, b.other, b.multi]) : "";
   if (sig === choicesShown) return;
   choicesShown = sig;
   choicesEl.replaceChildren();
+  multiPicked.clear();
+  choicesEl.classList.toggle("multi", b?.multi === true);
   if (!b) return;
   const row = (id: string, badge: string, label: string, onClick: () => void) => {
     const btn = document.createElement("button");
@@ -909,6 +999,23 @@ function renderChoices(b: Bot | null): void {
     btn.addEventListener("click", onClick);
     choicesEl.appendChild(btn);
   };
+  if (b.multi) {
+    // Each row ticks on and off; Send gives the bot every ticked row.
+    (b.options ?? []).forEach((label, i) => row(`opt-${i}`, String(i + 1), label, () => {
+      if (multiPicked.has(i)) multiPicked.delete(i); else multiPicked.add(i);
+      const el = document.getElementById(`opt-${i}`)!;
+      el.classList.toggle("on", multiPicked.has(i));
+      el.setAttribute("aria-pressed", String(multiPicked.has(i)));
+      const send = document.getElementById("opt-send") as HTMLButtonElement;
+      send.disabled = multiPicked.size === 0;
+      send.querySelector(".label")!.textContent = multiPicked.size === 0 ? "Pick one or more" : `Send ${multiPicked.size}`;
+    }));
+    row("opt-send", "", "Pick one or more", () => window.buddy.decideMulti([...multiPicked]));
+    const send = choicesEl.lastElementChild as HTMLButtonElement;
+    send.classList.add("send");
+    send.disabled = true;
+    return;
+  }
   (b.options ?? []).forEach((label, i) => row(`opt-${i}`, String(i + 1), label, () => window.buddy.decide(i)));
   if (b.other) {
     row("opt-other", "…", "Something else", () => {
@@ -933,7 +1040,40 @@ replyInput.addEventListener("keydown", (ev) => {
 replyForm.addEventListener("submit", (ev) => {
   ev.preventDefault();
   const text = replyInput.value.trim();
-  if (text) window.buddy.answerText(text);
+  if (!text) return;
+  if (body.dataset.ask === "note") {
+    window.buddy.leave(lead.name, { note: text });
+    noteFor = "";
+    replyInput.value = "";
+    refresh();
+  } else {
+    window.buddy.answerText(text);
+  }
+});
+replyInput.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && noteFor) { noteFor = ""; refresh(); }
+});
+
+// ---------- Progress, link and the Note / Pause / Stop buttons ----------
+const progressEl = document.getElementById("progress") as HTMLElement;
+const progressBar = document.getElementById("progress-bar") as HTMLElement;
+const progressLabel = document.getElementById("progress-label") as HTMLElement;
+const linkBtn = document.getElementById("link-btn") as HTMLButtonElement;
+const noteBtn = document.getElementById("note-btn") as HTMLButtonElement;
+const pauseBtn = document.getElementById("pause-btn") as HTMLButtonElement;
+const stopBtn = document.getElementById("stop-btn") as HTMLButtonElement;
+const waitingEl = document.getElementById("waiting") as HTMLElement;
+const detailEl = document.getElementById("detail") as HTMLDetailsElement;
+const detailText = document.getElementById("detail-text") as HTMLElement;
+linkBtn.addEventListener("click", () => window.buddy.openLink(lead.name));
+noteBtn.addEventListener("click", () => { noteFor = lead.key; refresh(); replyInput.focus(); });
+pauseBtn.addEventListener("click", () => window.buddy.leave(lead.name, { command: "pause" }));
+stopBtn.addEventListener("click", () => window.buddy.leave(lead.name, { command: "stop" }));
+window.buddy.onOutbox(({ agent, text }) => {
+  const b = bots.get(keyOf(agent));
+  if (!b) return;
+  b.waiting = text;
+  refresh();
 });
 
 // With the notch focused, Enter / Y approve and Escape / N deny a two-button
@@ -949,7 +1089,14 @@ window.addEventListener("keydown", (ev) => {
   if (lead.list) {
     // A list is answered by its number.
     const n = Number(ev.key);
-    if (Number.isInteger(n) && n >= 1 && n <= (lead.options?.length ?? 0)) { ev.preventDefault(); window.buddy.decide(n - 1); }
+    if (Number.isInteger(n) && n >= 1 && n <= (lead.options?.length ?? 0)) {
+      ev.preventDefault();
+      if (lead.multi) document.getElementById(`opt-${n - 1}`)?.click(); // ticks the row
+      else window.buddy.decide(n - 1);
+    } else if (lead.multi && ev.key === "Enter" && multiPicked.size > 0) {
+      ev.preventDefault();
+      window.buddy.decideMulti([...multiPicked]);
+    }
     return;
   }
   if (ev.key === "Enter" || ev.key === "y" || ev.key === "Y") {
@@ -967,13 +1114,16 @@ function reportRect(): void {
 }
 new ResizeObserver(reportRect).observe(pill);
 
-window.buddy.onState(({ state, text, agent, options, next, input, canRemember, list, other }) => setAgentState(state, text, agent, options, next, { input, canRemember, list, other }));
+window.buddy.onState((s) => setAgentState(s.state, s.text, s.agent, s.options, s.next, s));
 window.buddy.onReact(({ reaction: r, ms }) => react(r, ms ?? 1500));
 window.buddy.onSettings((s) => {
   quiet = s.quiet === true;
   glassOn = s.glass !== false;
   setCustomColours(s.colours);
+  setCustomShapes(s.shapes);
+  othersSig = ""; // the small faces are redrawn with any new shape or colour
   refresh();
+  setRiveCharacter(s.rive === true);
   soundsOn = s.sounds !== false && !quiet;
   volume = typeof s.volume === "number" ? Math.min(1, Math.max(0, s.volume)) : 0.6;
   if (typeof s.lingerFinishedMin === "number" && s.lingerFinishedMin > 0) KEEP_MS.finished = s.lingerFinishedMin * 60_000;

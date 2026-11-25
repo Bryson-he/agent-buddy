@@ -13,4 +13,10 @@ contextBridge.exposeInMainWorld("buddy", {
   decide: (choice: number) => ipcRenderer.send("buddy:decision", choice),
   decideAlways: () => ipcRenderer.send("buddy:decision-always"),
   answerText: (text: string) => ipcRenderer.send("buddy:text-answer", String(text)),
+  decideMulti: (indexes: number[]) => ipcRenderer.send("buddy:decision-multi", indexes),
+  // A note, or Pause / Stop, for an agent: it gets it with its next status update.
+  leave: (agent: string, what: unknown) => ipcRenderer.send("buddy:leave", String(agent), what),
+  onOutbox: (cb: (o: unknown) => void) => ipcRenderer.on("buddy:outbox", (_e, o) => cb(o)),
+  // Opens the link an agent attached to its status. The address stays in the main process.
+  openLink: (agent: string) => ipcRenderer.send("buddy:open-link", String(agent)),
 });

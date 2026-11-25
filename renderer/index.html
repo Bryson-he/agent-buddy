@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; media-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; media-src 'self'" />
     <title>Agent Buddy</title>
     <link rel="stylesheet" href="style.css" />
   </head>
@@ -11,6 +11,10 @@
          expanded = bigger face, agent name, steps, and buttons when the agent needs you. -->
     <div class="notch" id="pill">
       <div class="row">
+        <!-- The Rive character (Settings > New character). rive-face.ts keeps it exactly over the
+             drawn ball, one canvas pixel per screen pixel, so it stays sharp; while it shows,
+             the drawn body is hidden. The bubble and sparkles in the SVG stay on top. -->
+        <canvas id="rive-face" class="rive-canvas" width="64" height="64" aria-hidden="true"></canvas>
         <!-- The character: one shaded ball with two eyes. All of its motion is
              driven from renderer.ts (springs), so states flow into each other. -->
         <svg class="face" id="face" viewBox="-14 -14 92 92" role="img" aria-label="Agent Buddy">
@@ -75,9 +79,22 @@
           <div class="prev" id="prev"></div>
           <div class="status" id="status"></div>
           <div class="next" id="next"></div>
+          <!-- How far through a countable job -->
+          <div class="progress" id="progress" hidden><span class="bar"><i id="progress-bar"></i></span><span id="progress-label"></span></div>
         </div>
         <!-- Compact: the other bots as small faces -->
         <div class="others" id="others"></div>
+      </div>
+      <!-- Longer background to a question, closed until asked for -->
+      <details class="detail" id="detail" hidden><summary>Details</summary><div id="detail-text"></div></details>
+      <!-- For the lead bot: its link, and a way to tell it something. A note, Pause or Stop
+           reaches the bot with its next status update. -->
+      <div class="tools" id="tools">
+        <button class="tool link" id="link-btn" type="button" hidden></button>
+        <button class="tool" id="note-btn" type="button" hidden>Note</button>
+        <button class="tool" id="pause-btn" type="button" hidden>Pause</button>
+        <button class="tool stop" id="stop-btn" type="button" hidden>Stop</button>
+        <span class="waiting" id="waiting"></span>
       </div>
       <div class="actions" id="actions">
         <button class="btn approve" id="approve" type="button">Approve</button>
@@ -97,7 +114,9 @@
       <!-- Expanded: the other bots as tinted pills, a face and the line each is working on -->
       <div class="list" id="list"></div>
     </div>
+    <script src="vendor/rive/rive.js"></script>
     <script src="../dist/renderer/shared.js"></script>
     <script src="../dist/renderer/renderer.js"></script>
+    <script src="../dist/renderer/rive-face.js"></script>
   </body>
 </html>

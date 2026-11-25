@@ -24,7 +24,9 @@ Agents work for minutes at a time, and you end up checking their window to see w
 
 - **See it at a glance.** Each agent's current step, the one before it, how long it has been going, and whether it has gone quiet.
 - **Answer from anywhere.** When an agent asks, answer on the notch, with a shortcut, or from the Windows notification. Yes or no, a pick from up to four choices, or a typed answer, plus "always answer this way".
-- **Several agents at once.** One leads, the rest stay in view. Each has its own colour, and Claude Code and Cursor get their own character.
+- **Talk back.** Leave an agent a note from the notch, or press Pause or Stop. It reaches the agent with its next status update.
+- **More than a status line.** Progress bars, a link to open what the agent just changed, reminders it can set for you, and a quiet or urgent level per update.
+- **Several agents at once.** One leads, the rest stay in view. Give each its own colour and one of thirteen body shapes.
 - **Out of your way.** Move the cursor onto the notch and it turns see-through and lets clicks through. Touch the character's face to wake it.
 - **Private by default.** A local server on `127.0.0.1`. Nothing leaves your PC unless you switch on the tunnel for a cloud bot.
 
@@ -60,8 +62,17 @@ set_status { "state": "working", "message": "Updating the tracker", "next": "Ema
 // Ask the person and wait. Two buttons, or free_text for a typed answer.
 ask_user { "question": "Send the email to Sam?", "options": ["Send", "Don't send"], "agent": "Scout" }
 
+// A countable job draws a bar; a link adds a button; the reply carries anything you left for the agent.
+set_status { "state": "working", "message": "Creating objects 13-18", "progress": { "done": 12, "total": 30 },
+             "link": "https://example.com/tracker", "link_label": "Open tracker", "agent": "Atlas" }
+//  -> "Agent Buddy now shows: working. MESSAGE FROM THE USER ... : "Skip row 12 for now""
+
+// A reminder that shows on the notch later.
+remind_user { "text": "Check the licences arrived", "at": "15:00", "agent": "Atlas" }
+
 // Up to four choices show as a numbered list; allow_other adds "Something else" with a text box.
-ask_user { "question": "Row 516 went to the wrong company. How should I handle it?",
+// multi_select lets you tick several; detail puts longer background behind a "Details" fold.
+ask_user { "question": "Row 12 went to the wrong company. How should I handle it?",
            "options": ["Clone it and delete the copy", "Clone it and keep the copy", "I'll fix it myself"],
            "allow_other": true, "agent": "Atlas" }
 ```
@@ -76,7 +87,8 @@ Invoke-RestMethod http://127.0.0.1:47821/api/status -Method Post -ContentType 'a
 
 <img src="docs/images/windows.png" alt="The Settings window and the Activity panel" />
 
-- **Settings:** which screen, see-through on hover, sounds and volume, notifications, shortcuts, how long a finished agent stays, a colour per agent, and start with Windows.
+- **Settings:** which screen, see-through on hover, sounds and volume, notifications, shortcuts, how long a finished agent stays, when to tell agents you are away, a shape and a colour per agent, and start with Windows.
+- **A second character to try:** Settings has a "New character (trial)" switch that swaps the lead character for one drawn and animated in [Rive](https://rive.app). The source is in `rive/buddy`.
 - **Activity** (`Ctrl+Alt+H`): what every agent is doing now and what it has done today.
 - **Do not disturb:** no sounds or notifications, and the notch stays small. Questions still show.
 - **Remembered answers:** choose "Always…" under a question and that agent's same question is answered for you from then on. Forget one in Settings.
@@ -119,13 +131,17 @@ npm start
 | `npx electron . --snapshot-dir=shots` | Save a picture of every state and window, then exit |
 | `npx electron . --record-dir=rec` then `node scripts/make-apng.js rec docs/images/demo.png` | Record the demo story and build the animation above |
 
+The Rive character is built from `rive/buddy/scene.rml` with the [Rive CLI](https://rive.app/docs/cli/getting-started); the exported file in `renderer/rive` came from a free Rive workspace, so it shows Rive's splash mark for a moment when it loads.
+
 `CLAUDE.md` is a map of the code for AI assistants and people alike. Note that Windows only is supported today; the overlay and notifications rely on Windows behaviour.
 
 ## Credits
 
 The idea of a companion character that lives outside the app comes from Novra's concept case study, [Taking Grok Bot outside the app](https://www.novra.design/case-studies/grokbot). That concept describes a look for Mac and iPhone; this project is an independent Windows app with its own drawings, animation and code, and everything about connecting to agents is original to it.
 
-Agent Buddy is not affiliated with or endorsed by xAI, Anthropic, Anysphere (Cursor), Cloudflare or Novra. Product names belong to their owners.
+The trial character uses Rive's web runtime (MIT), included under `renderer/vendor/rive`.
+
+Agent Buddy is not affiliated with or endorsed by xAI, Anthropic, Anysphere (Cursor), Cloudflare, Rive or Novra. Product names belong to their owners.
 
 ## Licence
 

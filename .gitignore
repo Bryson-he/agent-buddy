@@ -10,3 +10,6 @@ release/
 CLAUDE.local.md
 shots/
 *.bak
+
+# Rive previews (large, rebuilt on demand)
+rive/preview/

@@ -1,6 +1,6 @@
 {
   "name": "agent-buddy",
-  "version": "0.5.0",
+  "version": "0.8.0",
   "private": true,
   "description": "A Windows desktop companion that shows what your AI agents (Claude Code, Cursor, Grok Bot, anything with MCP) are doing and asks you when one needs you.",
   "main": "dist/main/main.js",
@@ -51,6 +51,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@rive-app/webgl2": "^2.55.1",
     "@types/node": "^22.0.0",
     "electron": "^39.0.0",
     "electron-builder": "^26.0.0",

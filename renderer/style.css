@@ -484,3 +484,112 @@ body[data-size="expanded"] .list:not(:empty) { display: grid; }
 @keyframes mini-shake { 0%, 70%, 100% { transform: translateX(0); } 76% { transform: translateX(-1.6px); } 82% { transform: translateX(1.6px); } 88% { transform: translateX(-1px); } 94% { transform: translateX(1px); } }
 @keyframes mini-nudge { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
 @keyframes mini-blink { 0%, 91%, 100% { scale: 1 1; } 95% { scale: 1 0.12; } }
+
+/* ---------- The Rive character (trial) ----------
+   When it has loaded, body[data-rive="1"]: the canvas shows and the drawn body hides.
+   The bubble, sparkles and z's stay as they are. */
+.row { position: relative; }
+.rive-canvas { display: none; position: absolute; left: 0; top: 0; pointer-events: none; }
+body[data-rive="1"] .rive-canvas { display: block; }
+body[data-rive="1"] #face { position: relative; }
+body[data-ghost="1"] .rive-canvas { opacity: 0.85; }
+body[data-rive="1"] #body { visibility: hidden; }
+
+/* ---------- A question gets the room it needs ----------
+   The row is normally a fixed height with its text centred, which suits one-line
+   statuses. A question can run to several lines; in a fixed row the extra lines
+   pushed the bot's name up off the top of the screen. While a bot is asking, the
+   row grows with its text instead, and everything hangs from the top. */
+body[data-state="needsYou"] .row {
+  height: auto;
+  min-height: var(--row);
+  align-items: flex-start;
+  padding: 10px 0 8px;
+  box-sizing: border-box;
+}
+body[data-state="needsYou"] .status {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow-wrap: anywhere;
+}
+/* The step before the question lines up with the question. */
+body[data-state="needsYou"] .prev { padding-left: 0; }
+/* Wrapped lines of a question line up with its first word, not under the dot. */
+body[data-state="needsYou"] .status { padding-left: 12px; text-indent: -12px; }
+
+/* ---------- Progress, links, notes, details, pick several ---------- */
+[hidden] { display: none !important; }
+
+/* How far through a countable job: a thin bar and "12 of 30" */
+.progress { display: flex; align-items: center; gap: 8px; height: 14px; margin-top: 2px; }
+.progress .bar { flex: 1; height: 4px; border-radius: 2px; background: #26272c; overflow: hidden; }
+.progress .bar i { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--accent); transition: width 420ms var(--ease); }
+#progress-label { flex: none; font-size: 11px; color: #9aa3b2; font-variant-numeric: tabular-nums; }
+body[data-size="compact"] .progress { display: none; }
+
+/* The lead bot's link and the Note / Pause / Stop buttons */
+.tools { display: none; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 0 10px 62px; -webkit-app-region: no-drag; }
+body[data-size="expanded"][data-tools="1"] .tools { display: flex; animation: rise 260ms var(--ease); }
+.tool {
+  -webkit-app-region: no-drag;
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 12px;
+  background: #1d1e23;
+  color: #c9ced8;
+  font: 600 11.5px "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: transform 160ms var(--spring), filter 120ms;
+}
+.tool:hover { filter: brightness(1.25); transform: scale(1.04); }
+.tool:active { transform: scale(0.96); }
+.tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tool.link { background: #f2f3f5; color: #0b0b0d; }
+.tool.stop { color: #ff8a8a; }
+.waiting { font-size: 11px; color: #fbbf24; }
+.waiting:empty { display: none; }
+/* Room for the buttons on one line */
+body[data-size="expanded"][data-tools="1"] { --w: 390px; }
+
+/* A note for the bot uses the same text box as a typed answer */
+body[data-ask="note"] .reply { display: flex; animation: rise 260ms var(--ease); }
+body[data-ask="note"] .tools { display: none !important; }
+
+/* Longer background to a question */
+.detail { margin: 0 0 8px 62px; font-size: 11.5px; color: #9aa3b2; -webkit-app-region: no-drag; }
+.detail summary { cursor: pointer; list-style: none; color: #c9ced8; font-weight: 600; width: fit-content; }
+.detail summary::-webkit-details-marker { display: none; }
+.detail summary::after { content: " ▾"; }
+.detail[open] summary::after { content: " ▴"; }
+.detail summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#detail-text { margin-top: 5px; max-height: 110px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 15px; user-select: text; padding-right: 4px; }
+#detail-text::-webkit-scrollbar { width: 6px; }
+#detail-text::-webkit-scrollbar-thumb { background: #34373f; border-radius: 3px; }
+
+/* Pick several: rows tick on and off, then Send */
+.choices.multi .choice:first-child { background: #1d1e23; color: var(--text); }
+.choices.multi .choice:first-child .key { background: #2f3138; color: #b9bec9; }
+.choices.multi .choice.on { background: color-mix(in srgb, var(--accent) 22%, #1d1e23); }
+.choices.multi .choice.on .key { background: var(--accent); color: #0b0b0d; }
+.choices.multi .choice.send { background: #f2f3f5; color: #0b0b0d; justify-content: center; font-weight: 600; }
+.choices.multi .choice.send:disabled { opacity: 0.35; cursor: default; transform: none; filter: none; }
+.choices.multi .choice.send .key { display: none; }
+
+/* ---------- The row always fits what is in it ----------
+   The row used to be a fixed height. With a previous step, the current step, a
+   "Next" line and a progress bar all showing, the text was taller than the row
+   and its top (the bot's name) was pushed off the screen. The row now has a
+   minimum height and grows past it when it needs to. */
+.row {
+  height: auto;
+  min-height: var(--row);
+  transition: opacity 160ms, min-height 460ms var(--ease), gap 460ms var(--ease);
+}
+body[data-size="expanded"] .row { padding: 6px 0; box-sizing: border-box; }

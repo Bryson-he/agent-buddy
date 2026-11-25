@@ -83,3 +83,12 @@ button:hover, select:hover:not(:disabled) { border-color: #4a5060; }
 .range output { width: 38px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* A shape and a colour per agent */
+.row.agent { flex-direction: column; align-items: stretch; gap: 8px; }
+.row.agent .label { font-weight: 600; }
+.row.agent .colour { flex-wrap: wrap; }
+select.shape { min-width: 130px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 5px; }
+.swatch { width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 2px solid transparent; }
+.swatch[aria-pressed="true"] { border-color: #fff; box-shadow: 0 0 0 1px #111216 inset; }

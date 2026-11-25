@@ -1,8 +1,8 @@
-import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, globalShortcut, nativeImage, screen, ipcMain, shell } from "electron";
+import { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, globalShortcut, nativeImage, powerMonitor, screen, ipcMain, shell } from "electron";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
-import type { AskUserArgs, AskUserResult, AskWait, BuddyBackend } from "../mcp/tools.js";
+import type { AskUserArgs, AskUserResult, AskWait, BuddyBackend, RemindArgs, StatusReply, Urgency } from "../mcp/tools.js";
 import { BUDDY_PORT, startBuddyServer } from "./server.js";
 import { pickModel, runGrokChat, type ChatMessage } from "./grok.js";
 import { clearApiKey, getApiKey, saveApiKey } from "./keystore.js";
@@ -30,9 +30,12 @@ import {
 // Snapshot mode (pictures for the docs) uses a throwaway folder, so the pictures
 // never show the owner's real bots, rules or settings.
 const SNAPSHOT_MODE = process.argv.some((a) => a.startsWith("--snapshot-dir=") || a.startsWith("--record-dir="));
+// Dev mode can name its own data folder (AGENT_BUDDY_DATA), and with AGENT_BUDDY_PORT its own
+// port: a test copy then runs beside the installed app without touching its data or its lock.
+const DEV_DATA = process.env.AGENT_BUDDY_DEV === "1" ? process.env.AGENT_BUDDY_DATA : undefined;
 app.setPath("userData", SNAPSHOT_MODE
   ? path.join(app.getPath("temp"), "agent-buddy-snapshots")
-  : path.join(app.getPath("appData"), "agent-buddy"));
+  : DEV_DATA || path.join(app.getPath("appData"), "agent-buddy"));
 
 /** Files that outside programs must run (the hook scripts) cannot live inside the packed app archive. */
 function resourcePath(...parts: string[]): string {
@@ -42,12 +45,15 @@ function resourcePath(...parts: string[]): string {
 
 /** Sets or clears the Windows start-up entry for whichever copy is running. */
 function setStartWithWindows(on: boolean): void {
-  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: on });
-  else app.setLoginItemSettings({ openAtLogin: on, path: process.execPath, args: [path.join(__dirname, "..", "..")] });
+  if (app.isPackaged) { app.setLoginItemSettings({ openAtLogin: on }); return; }
+  // A copy run from source never registers itself. It once did, and after a
+  // restart Windows started it instead of the installed app (both were listed,
+  // and whichever starts first keeps the other out). It only ever removes its entry.
+  app.setLoginItemSettings({ openAtLogin: false, path: process.execPath, args: [path.join(__dirname, "..", "..")] });
 }
 
 const OVERLAY_WIDTH = 420;
-const OVERLAY_HEIGHT = 400; // room for a question with four choices
+const OVERLAY_HEIGHT = 540; // room for a long question, its details and four choices
 const DEFAULT_AGENT = "Agent Buddy";
 const CURSOR_NEAR_PX = 80;
 const CURSOR_MOVE_MIN = 2;
@@ -99,11 +105,15 @@ function settingsView() {
 }
 
 /** Every agent seen so far, plus any that has a colour set, for the colour pickers in Settings. */
+/** The key a colour is stored under: the name in lower case with only letters and digits, as the pages' keyOf() makes it. */
+const colourKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
 function knownAgents(): { key: string; name: string }[] {
+  // One row per agent. "ATLAS" seen in the history and "atlas" in the saved colours are the same agent;
+  // they used to show as two rows, and only one of them could be changed.
   const out = new Map<string, string>();
-  for (const b of historySnapshot()) out.set(agentKey(b.name), b.name);
+  for (const b of historySnapshot()) { const k = colourKey(b.name); if (k) out.set(k, b.name); }
   for (const key of Object.keys(loadAppSettings().agentColours ?? {})) if (!out.has(key)) out.set(key, key);
-  out.delete(agentKey(DEFAULT_AGENT));
+  out.delete(colourKey(DEFAULT_AGENT));
   return [...out].map(([key, name]) => ({ key, name })).sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -111,7 +121,7 @@ function knownAgents(): { key: string; name: string }[] {
 function pushSettings(): void {
   if (!overlay || overlay.isDestroyed()) return;
   const s = loadAppSettings();
-  overlay.webContents.send("buddy:settings", { sounds: s.sounds, volume: s.volume, lingerFinishedMin: s.lingerFinishedMin, glass: s.glass, colours: s.agentColours ?? {}, quiet: dndOn() });
+  overlay.webContents.send("buddy:settings", { sounds: s.sounds, volume: s.volume, lingerFinishedMin: s.lingerFinishedMin, glass: s.glass, rive: s.riveCharacter === true, colours: s.agentColours ?? {}, shapes: s.agentShapes ?? {}, quiet: dndOn() });
 }
 
 // ---------- Do not disturb ----------
@@ -155,17 +165,21 @@ function dndLabel(): string {
   return `Do not disturb: until ${new Date(dndUntil).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
+/** The body shapes an agent can be given (the same list as SHAPE_NAMES in the pages' shared.ts). */
+const SHAPE_CHOICES = ["ball", "cloud", "square", "sparkle", "clover", "drop", "burst", "egg", "pill", "triangle", "house", "star", "hex"];
+
 /** Saves only known settings with sane values, then applies them straight away. */
 function applySettings(patch: unknown): void {
   if (!patch || typeof patch !== "object") return;
   const p = patch as Record<string, unknown>;
   const clean: Partial<AppSettings> = {};
-  for (const key of ["sounds", "notifications", "shortcuts", "startWithWindows", "glass", "onboarded"] as const) {
+  for (const key of ["sounds", "notifications", "shortcuts", "startWithWindows", "glass", "onboarded", "riveCharacter"] as const) {
     if (typeof p[key] === "boolean") clean[key] = p[key];
   }
   if (typeof p.volume === "number" && Number.isFinite(p.volume)) clean.volume = Math.min(1, Math.max(0, p.volume));
   if (typeof p.display === "number" && Number.isInteger(p.display) && p.display >= 0 && p.display < 16) clean.display = p.display;
   if (typeof p.lingerFinishedMin === "number" && [1, 5, 15, 60].includes(p.lingerFinishedMin)) clean.lingerFinishedMin = p.lingerFinishedMin;
+  if (typeof p.awayAfterMin === "number" && [0, 2, 5, 10, 15].includes(p.awayAfterMin)) clean.awayAfterMin = p.awayAfterMin;
   // Colour per agent: { key: "#rrggbb" } sets one, { key: null } goes back to the built-in colour.
   if (p.agentColours && typeof p.agentColours === "object") {
     const colours = { ...(loadAppSettings().agentColours ?? {}) };
@@ -175,6 +189,16 @@ function applySettings(patch: unknown): void {
       else if (v === null) delete colours[k];
     }
     if (Object.keys(colours).length <= 60) clean.agentColours = colours;
+  }
+  // Shape per agent: { key: "star" } sets one, { key: null } goes back to the default.
+  if (p.agentShapes && typeof p.agentShapes === "object") {
+    const shapes = { ...(loadAppSettings().agentShapes ?? {}) };
+    for (const [k, v] of Object.entries(p.agentShapes as Record<string, unknown>)) {
+      if (!/^[a-z0-9]{1,40}$/.test(k)) continue;
+      if (typeof v === "string" && SHAPE_CHOICES.includes(v)) shapes[k] = v;
+      else if (v === null) delete shapes[k];
+    }
+    if (Object.keys(shapes).length <= 60) clean.agentShapes = shapes;
   }
   if (Object.keys(clean).length === 0) return;
 
@@ -312,9 +336,117 @@ function setState(
   agent?: string,
   options?: string[],
   next?: string,
-  ask?: { input?: boolean; canRemember?: boolean; list?: boolean; other?: boolean },
+  ask?: { input?: boolean; canRemember?: boolean; list?: boolean; other?: boolean; multi?: boolean; detail?: string },
+  extra?: { progress?: { done: number; total: number }; urgency?: Urgency; linkLabel?: string },
 ): void {
-  overlay?.webContents.send("buddy:state", { state, text, agent, options, next, input: ask?.input === true, canRemember: ask?.canRemember === true, list: ask?.list === true, other: ask?.other === true });
+  overlay?.webContents.send("buddy:state", {
+    state, text, agent, options, next,
+    input: ask?.input === true, canRemember: ask?.canRemember === true, list: ask?.list === true, other: ask?.other === true,
+    multi: ask?.multi === true, detail: ask?.detail,
+    progress: extra?.progress, urgency: extra?.urgency, linkLabel: extra?.linkLabel,
+    waiting: agent ? outboxLabel(outbox.get(agentKey(agent))) : "",
+  });
+}
+
+// ---------- From the user back to an agent ----------
+// Nothing can be pushed into an agent, but every status update it sends gets a
+// reply. So a note typed on the notch, or Pause or Stop, waits here and rides
+// back on that agent's next update.
+type Outbox = { notes: string[]; command?: "pause" | "stop" };
+const outbox = new Map<string, Outbox>();
+function outboxLabel(o?: Outbox): string {
+  if (!o) return "";
+  if (o.command === "stop") return "Stop sent: it sees it at its next step";
+  if (o.command === "pause") return "Pause sent: it sees it at its next step";
+  return o.notes.length === 1 ? "Note sent: it sees it at its next step" : `${o.notes.length} notes sent: it sees them at its next step`;
+}
+function tellNotch(agent: string): void {
+  overlay?.webContents.send("buddy:outbox", { agent, text: outboxLabel(outbox.get(agent)) });
+}
+function leaveForAgent(agentName: string, what: { note?: string; command?: "pause" | "stop" }): void {
+  const agent = agentKey(agentName);
+  const o = outbox.get(agent) ?? { notes: [] };
+  const text = (what.note ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+  if (text && o.notes.length < 5) { o.notes.push(text); note(agent, "answered", `You left a note: ${text.slice(0, 80)}`); }
+  if (what.command) { o.command = what.command; note(agent, "answered", what.command === "stop" ? "You pressed Stop" : "You pressed Pause"); }
+  if (o.notes.length === 0 && !o.command) return;
+  outbox.set(agent, o);
+  tellNotch(agent);
+}
+/** Hands over, and clears, whatever is waiting for an agent. */
+function takeOutbox(agent: string): StatusReply {
+  const o = outbox.get(agent);
+  outbox.delete(agent);
+  if (o) tellNotch(agent);
+  return { notes: o?.notes ?? [], command: o?.command, away: userAway() };
+}
+
+// ---------- Is the user at the PC? ----------
+let fakeIdleSec = -1; // dev mode: tests set this
+function userAway(): boolean {
+  const min = loadAppSettings().awayAfterMin ?? 5;
+  if (min <= 0) return false;
+  const idle = fakeIdleSec >= 0 ? fakeIdleSec : powerMonitor.getSystemIdleTime();
+  return idle >= min * 60;
+}
+
+// ---------- Links a status can carry ----------
+// The address is kept here and never sent to the page: the page only says "open
+// this agent's link", so nothing on the page can choose where a click goes.
+const links = new Map<string, string>();
+function openAgentLink(agentName: string): void {
+  const url = links.get(agentKey(agentName));
+  if (url && /^https?:\/\//i.test(url)) void shell.openExternal(url);
+}
+
+// ---------- Reminders ----------
+type Reminder = { id: string; agent: string; text: string; at: number };
+const SNOOZE = "Snooze 10 min";
+const remindersFile = () => path.join(app.getPath("userData"), "reminders.json");
+const reminderTimers = new Map<string, NodeJS.Timeout>();
+function loadReminders(): Reminder[] {
+  try {
+    const list = JSON.parse(fs.readFileSync(remindersFile(), "utf8")) as Reminder[];
+    return Array.isArray(list) ? list.filter((r) => r && typeof r.text === "string" && typeof r.at === "number") : [];
+  } catch { return []; }
+}
+function saveReminders(list: Reminder[]): void {
+  try { fs.writeFileSync(remindersFile(), JSON.stringify(list, null, 2)); } catch { /* shows this run only */ }
+}
+function armReminder(r: Reminder): void {
+  clearTimeout(reminderTimers.get(r.id));
+  // setTimeout cannot wait longer than about 24 days; a week is the most a reminder can be.
+  reminderTimers.set(r.id, setTimeout(() => fireReminder(r), Math.max(0, r.at - Date.now())));
+}
+function addReminder(agent: string, text: string, at: number): Reminder {
+  const r: Reminder = { id: crypto.randomBytes(6).toString("hex"), agent, text, at };
+  saveReminders([...loadReminders(), r].slice(-50));
+  armReminder(r);
+  return r;
+}
+function fireReminder(r: Reminder): void {
+  reminderTimers.delete(r.id);
+  saveReminders(loadReminders().filter((x) => x.id !== r.id));
+  overlay?.webContents.send("buddy:play-sound", "needsYou");
+  void askUserQueued({ question: `Reminder: ${r.text}`, options: ["Got it", SNOOZE], agent: r.agent, timeout_sec: 600 }).then((res) => {
+    if (res.answer === SNOOZE) addReminder(r.agent, r.text, Date.now() + 10 * 60_000);
+    setState("idle", undefined, r.agent);
+  });
+}
+/** When a reminder should show, from "in N minutes", "HH:MM" local time, or an ISO date and time. */
+function reminderTime(a: RemindArgs): number | null {
+  if (typeof a.in_minutes === "number") return Date.now() + a.in_minutes * 60_000;
+  const at = (a.at ?? "").trim();
+  const clock = /^(\d{1,2}):(\d{2})$/.exec(at);
+  if (clock) {
+    const d = new Date();
+    d.setHours(Number(clock[1]), Number(clock[2]), 0, 0);
+    if (Number(clock[1]) > 23 || Number(clock[2]) > 59) return null;
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    return d.getTime();
+  }
+  const t = Date.parse(at);
+  return Number.isFinite(t) && t > Date.now() && t < Date.now() + 8 * 86_400_000 ? t : null;
 }
 
 // ---------- Activity panel ----------
@@ -396,6 +528,8 @@ type Ask = {
   options: string[]; // two to four answers
   list: boolean;     // shown as a lettered list (more than two answers, or long ones) instead of two buttons
   allowOther: boolean; // the list ends with "Something else", which takes a typed answer
+  multi: boolean;    // the user may tick several answers, then Send
+  detail: string;    // longer background the user can open before answering
   freeText: boolean; // the user types an answer instead of choosing
   deadline: number;
   nonce: string; // one-time code that notification buttons must echo back
@@ -448,7 +582,7 @@ function askToastXml(q: Ask): string {
     `<text>${xmlEscape(`${q.agent} needs you`)}</text><text>${xmlEscape(q.question.slice(0, 200))}</text>` +
     `</binding></visual>` +
     // A typed answer has to be given on the notch, so that toast has no buttons.
-    (q.freeText
+    (q.freeText || q.multi
       ? ""
       : `<actions>` +
         q.options.map((o, i) => `<action content="${xmlEscape(o)}" activationType="protocol" arguments="${link(i)}"/>`).join("") +
@@ -460,7 +594,7 @@ function askToastXml(q: Ask): string {
 function presentAsk(q: Ask): void {
   currentAsk = q;
   stopDemo();
-  setState("needsYou", q.question, q.agent, q.options, undefined, { input: q.freeText, canRemember: !q.freeText && !q.list, list: q.list, other: q.allowOther });
+  setState("needsYou", q.question, q.agent, q.options, undefined, { input: q.freeText, canRemember: !q.freeText && !q.list, list: q.list, other: q.allowOther, multi: q.multi, detail: q.detail });
   note(q.agent, "needsYou", q.question);
   overlay?.showInactive();
   if (dndOn()) dndTally.questions += 1;
@@ -476,7 +610,7 @@ function presentAsk(q: Ask): void {
 }
 
 /** Ends the question on screen (label = the user's answer, null = timed out) and shows the next. */
-function settleAsk(q: Ask, label: string | null): void {
+function settleAsk(q: Ask, label: string | null, answers?: string[]): void {
   if (currentAsk !== q) return;
   clearTimeout(q.timer);
   try { q.toast?.close(); } catch { /* already gone */ }
@@ -486,11 +620,11 @@ function settleAsk(q: Ask, label: string | null): void {
     note(q.agent, "timedOut", "No answer in time");
     deliver(q, { answer: null, timedOut: true });
   } else {
-    const typed = q.freeText || !q.options.includes(label);
-    const shown = typed ? `You answered: ${label.slice(0, 60)}` : `You chose "${label.slice(0, 60)}"`;
+    const typed = q.freeText || (!answers && !q.options.includes(label));
+    const shown = answers ? `You picked ${answers.length}: ${label.slice(0, 50)}` : typed ? `You answered: ${label.slice(0, 60)}` : `You chose "${label.slice(0, 60)}"`;
     setState("working", shown, q.agent);
     note(q.agent, "answered", shown);
-    deliver(q, { answer: label, timedOut: false });
+    deliver(q, { answer: label, answers, timedOut: false });
   }
   showNextAsk();
 }
@@ -535,15 +669,24 @@ function askUserQueued(a: AskUserArgs, wait?: AskWait): Promise<AskUserResult> {
       note(agent, "answered", `${shown}: ${a.question.slice(0, 80)}`);
       return resolve({ answer: rule.answer, timedOut: false });
     }
+    // Nobody at the PC: an agent with a chat to fall back on is told so at once.
+    if (wait?.tellIfAway && userAway()) {
+      setState("working", "Asked you in chat (you were away)", agent);
+      note(agent, "timedOut", `Asked while you were away: ${a.question.slice(0, 80)}`);
+      return resolve({ answer: null, away: true });
+    }
     if (askQueue.length >= MAX_QUEUED) return resolve({ answer: null, busy: true });
     const options = a.options && a.options.length >= 2 ? a.options.slice(0, 4) : ["Approve", "Deny"];
-    const allowOther = a.allow_other === true && !freeText;
+    const multi = a.multi_select === true && !freeText;
+    const allowOther = a.allow_other === true && !freeText && !multi;
     const q: Ask = {
       agent,
       question: a.question,
       options,
-      list: !freeText && (options.length > 2 || allowOther || options.some((o) => o.length > BUTTON_LABEL_MAX)),
+      list: !freeText && (multi || options.length > 2 || allowOther || options.some((o) => o.length > BUTTON_LABEL_MAX)),
       allowOther,
+      multi,
+      detail: (a.detail ?? "").trim(),
       freeText,
       deadline: Date.now() + (a.timeout_sec ?? 120) * 1000,
       nonce: crypto.randomBytes(12).toString("hex"),
@@ -567,10 +710,20 @@ function askUserQueued(a: AskUserArgs, wait?: AskWait): Promise<AskUserResult> {
 /** Answers the question on screen. A nonce, when given, must match (notification buttons). */
 function answerCurrent(choice: number, nonce?: string, remember = false): boolean {
   const q = currentAsk;
-  if (!q || q.freeText || (nonce !== undefined && nonce !== q.nonce)) return false;
+  if (!q || q.freeText || q.multi || (nonce !== undefined && nonce !== q.nonce)) return false;
   if (!Number.isInteger(choice) || choice < 0 || choice >= q.options.length) return false;
   if (remember && !q.list) rememberAnswer(q.agent, q.question, q.options[choice]);
   settleAsk(q, q.options[choice]);
+  return true;
+}
+
+/** Answers a pick-several question with the rows that were ticked. */
+function answerMulti(indexes: unknown): boolean {
+  const q = currentAsk;
+  if (!q || !q.multi || !Array.isArray(indexes)) return false;
+  const picked = [...new Set(indexes.filter((i): i is number => Number.isInteger(i) && i >= 0 && i < q.options.length))].sort((a, b) => a - b);
+  if (picked.length === 0) return false;
+  settleAsk(q, picked.map((i) => q.options[i]).join("; "), picked.map((i) => q.options[i]));
   return true;
 }
 
@@ -586,21 +739,38 @@ function answerWithText(text: string): boolean {
 const hasOpenAsk = (agent: string) => currentAsk?.agent === agent || askQueue.some((q) => q.agent === agent);
 
 const backend: BuddyBackend = {
-  async setStatus({ state, message, agent, next }) {
+  async setStatus({ state, message, agent, next, progress, urgency, link, link_label }) {
     stopDemo();
     const key = agentKey(agent);
     // A bot's own status must not replace its question while that is still
     // waiting for the user; other bots keep updating their own line.
-    if (hasOpenAsk(key)) return;
+    if (hasOpenAsk(key)) return takeOutbox(key);
     if (dndOn()) {
       if (state === "finished") dndTally.finished += 1;
       else if (state === "error") dndTally.errors += 1;
     }
-    setState(state, message, key, undefined, next);
+    if (link) links.set(key, link); else links.delete(key);
+    // What the user left for this agent goes back with this update, and its marker clears.
+    const reply = takeOutbox(key);
+    setState(state, message, key, undefined, next, undefined, {
+      progress: progress && progress.total > 0 ? { done: Math.min(progress.done, progress.total), total: progress.total } : undefined,
+      urgency,
+      linkLabel: link ? (link_label ?? "Open") : undefined,
+    });
     note(key, state, message ?? "");
     if (overlay && !overlay.isDestroyed() && !overlay.isVisible()) overlay.showInactive();
+    if (urgency === "urgent" && !dndOn() && Notification.isSupported() && loadAppSettings().notifications !== false) {
+      try { new Notification({ title: `${key}: ${state}`, body: message ?? "" }).show(); } catch { /* the notch still shows it */ }
+    }
+    return reply;
   },
   askUser: (a, wait) => askUserQueued(a, wait),
+  async remindUser(a) {
+    const at = reminderTime(a);
+    if (at === null) return null;
+    addReminder(agentKey(a.agent), a.text.replace(/\s+/g, " ").trim(), at);
+    return { at };
+  },
 };
 
 // ---------- Answering without the mouse ----------
@@ -615,7 +785,7 @@ let answerKeysFor = ""; // the question the answer keys are registered for
 
 function syncAnswerShortcuts(): void {
   // Not for typed answers: there is nothing a single key could choose.
-  const want = currentAsk !== null && !currentAsk.freeText && loadAppSettings().shortcuts !== false;
+  const want = currentAsk !== null && !currentAsk.freeText && !currentAsk.multi && loadAppSettings().shortcuts !== false;
   // Which keys are wanted depends on the question, so compare the question too.
   const sig = want && currentAsk ? currentAsk.nonce : "";
   if (sig === answerKeysFor) return;
@@ -1166,7 +1336,7 @@ async function snapshotAll(dir: string): Promise<void> {
   if (!overlay) return;
   fs.mkdirSync(dir, { recursive: true });
   // Sample bots get fixed colours so the pictures look the same every time.
-  saveAppSettings({ agentColours: { scout: "#f3f3f1", atlas: "#f0353f", juno: "#2f7cf6", pixel: "#19b8a6" }, glass: true, onboarded: true });
+  saveAppSettings({ agentColours: { scout: "#f3f3f1", atlas: "#f0353f", juno: "#2f7cf6", pixel: "#19b8a6" }, agentShapes: { atlas: "pill", juno: "star", pixel: "clover" }, glass: true, onboarded: true, riveCharacter: process.argv.includes("--rive") });
   pushSettings();
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const shots: [string, () => void, number][] = [
@@ -1223,7 +1393,13 @@ async function snapshotAll(dir: string): Promise<void> {
   for (const [name, act] of [
     ["ask-always", () => setState("needsYou", "Send the daily report?", "Scout", ["Send", "Don't send"], undefined, { canRemember: true })],
     ["ask-text", () => setState("needsYou", "Which row should I update?", "Atlas", undefined, undefined, { input: true })],
-    ["ask-list", () => { void overlay?.webContents.executeJavaScript("bots.clear(); window.clearTimeout(reactionTimer); reaction = \"none\"; body.dataset.reaction = \"none\"; refresh();").then(() => setState("needsYou", "Row 516 went to the wrong company. How should I handle it?", "Atlas", ["Clone it into the right company and delete the copy", "Clone it and keep the copy", "I'll fix it myself; carry on with the rest"], undefined, { list: true, other: true })); }],
+    ["ask-list", () => { void overlay?.webContents.executeJavaScript("bots.clear(); setAgentState(\"working\", \"Preparing the row 11 update\", \"Atlas\"); window.clearTimeout(reactionTimer); reaction = \"none\"; body.dataset.reaction = \"none\"; refresh();").then(() => setState("needsYou", "Upload row 11 to the master sheet? (It marks the row complete and adds today's note; the last column stays as it is)", "Atlas", ["Clone it into the right company and delete the copy", "Clone it and keep the copy", "I'll fix it myself; carry on with the rest"], undefined, { list: true, other: true })); }],
+    // Pick several, with details behind a fold (opened for the picture).
+    ["ask-multi", () => { setState("idle", undefined, "Atlas"); setState("needsYou", "Which rows should I update in the tracker?", "Juno", ["Row 10: North depot", "Row 11: East depot", "Row 12: West depot"], undefined, { list: true, multi: true, detail: "All three were checked in today.\nRow 11 still shows the old serial number.\nNothing else in the sheet changes." }); void overlay?.webContents.executeJavaScript("setTimeout(() => { document.getElementById('detail').open = true; document.getElementById('opt-0').click(); document.getElementById('opt-2').click(); }, 500)"); }],
+    // A status with progress and a link, and the Note / Pause / Stop buttons (shown as if the cursor were on the notch).
+    ["progress-link", () => { setState("idle", undefined, "Juno"); void overlay?.webContents.executeJavaScript("bots.clear(); refresh();").then(() => { setState("working", "Uploading the checklist PDFs", "Juno"); setState("working", "Creating records 13-18", "Juno", undefined, "Verify batch 3", undefined, { progress: { done: 12, total: 30 }, linkLabel: "Open tracker" }); }); }],
+    ["steer", () => { void overlay?.webContents.executeJavaScript("hovering = true; refresh(); updateSize();"); }],
+    ["note-sent", () => { leaveForAgent("Juno", { note: "Skip row 12 for now" }); }],
   ] as const) {
     act();
     await wait(1300);
@@ -1297,7 +1473,7 @@ async function recordDemo(dir: string): Promise<void> {
     [2300, () => setState("needsYou", "Allow this command? (deletes files)", "Claude Code", ["Approve", "Deny"])],
     [2600, () => setState("working", "You chose \"Deny\"", "Claude Code")],
     [1500, () => setState("working", "Creating objects 6-12 of 30", "Atlas")],
-    [1900, () => setState("needsYou", "Row 516 went to the wrong company. How should I handle it?", "Atlas", ["Clone it into the right company and delete the copy", "Clone it and keep the copy", "I'll fix it myself; carry on with the rest"], undefined, { list: true, other: true })],
+    [1900, () => setState("needsYou", "Row 12 went to the wrong company. How should I handle it?", "Atlas", ["Clone it into the right company and delete the copy", "Clone it and keep the copy", "I'll fix it myself; carry on with the rest"], undefined, { list: true, other: true })],
     [3800, () => setState("working", "You chose \"Clone it and keep the copy\"", "Atlas")],
     [1500, () => setState("error", "Couldn't reach the server", "Juno")],
     [2400, () => setState("finished", "All 42 tests pass", "Claude Code")],
@@ -1362,6 +1538,16 @@ if (!gotLock) {
     registerWelcomeIpc();
     ipcMain.on("buddy:decision-always", () => { stopDemo(); answerCurrent(0, undefined, true); });
     ipcMain.on("buddy:text-answer", (_e, text: unknown) => { if (typeof text === "string") answerWithText(text); });
+    ipcMain.on("buddy:decision-multi", (_e, indexes: unknown) => { stopDemo(); answerMulti(indexes); });
+    ipcMain.on("buddy:leave", (_e, agent: unknown, what: unknown) => {
+      if (typeof agent !== "string" || !what || typeof what !== "object") return;
+      const w = what as { note?: unknown; command?: unknown };
+      leaveForAgent(agent, {
+        note: typeof w.note === "string" ? w.note : undefined,
+        command: w.command === "pause" || w.command === "stop" ? w.command : undefined,
+      });
+    });
+    ipcMain.on("buddy:open-link", (_e, agent: unknown) => { if (typeof agent === "string") openAgentLink(agent); });
     ipcMain.handle("panel:get", () => historySnapshot());
     ipcMain.handle("panel:colours", () => loadAppSettings().agentColours ?? {});
 
@@ -1410,7 +1596,11 @@ if (!gotLock) {
       dev: process.env.AGENT_BUDDY_DEV === "1"
         ? {
             click: (c) => void overlay?.webContents.executeJavaScript(`document.getElementById(${JSON.stringify(c === 2 ? "always" : c === 0 ? "approve" : "deny")}).click()`),
-            clickOption: (i) => void overlay?.webContents.executeJavaScript(`document.getElementById(${JSON.stringify(i < 0 ? "opt-other" : `opt-${i}`)}).click()`),
+            clickOption: (i) => void overlay?.webContents.executeJavaScript(`document.getElementById(${JSON.stringify(i === -2 ? "opt-send" : i < 0 ? "opt-other" : `opt-${i}`)}).click()`),
+            leave: (agent, what) => leaveForAgent(agent, what),
+            setIdle: (seconds) => { fakeIdleSec = seconds; },
+            quit: () => app.quit(),
+            openLink: (url) => handleProtocolUrl(url),
             typeAnswer: (text) => void overlay?.webContents.executeJavaScript(`(() => { document.getElementById("reply-text").value = ${JSON.stringify(text)}; document.getElementById("reply").requestSubmit(); })()`),
             snapshot: async () => (await overlay!.webContents.capturePage()).toPNG(),
             currentAsk: () => (currentAsk ? { agent: currentAsk.agent, nonce: currentAsk.nonce, queued: askQueue.length } : null),
@@ -1418,11 +1608,13 @@ if (!gotLock) {
         : undefined,
     });
     if (loadTunnelEnabled()) tunnel.start();
+    for (const r of loadReminders()) armReminder(r);
     app.on("before-quit", () => tunnel.stop());
 
     // Let Windows hand agentbuddy:// links to this app (for notification buttons).
+    // A test copy with its own data folder leaves the links pointing at the real app.
     if (app.isPackaged) app.setAsDefaultProtocolClient(PROTOCOL);
-    else app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(__dirname, "..", "..")]);
+    else if (!DEV_DATA) app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(__dirname, "..", "..")]);
     syncToggleShortcut();
     app.on("will-quit", () => globalShortcut.unregisterAll());
 

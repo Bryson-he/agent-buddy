@@ -41,3 +41,22 @@ function defaultColourFor(key: string): string {
 function colourFor(key: string): string {
   return customColours[key] ?? defaultColourFor(key);
 }
+
+// Body shapes an agent can have. The order is the number the Rive character expects.
+const SHAPE_NAMES = ["ball", "cloud", "square", "sparkle", "clover", "drop", "burst", "egg", "pill", "triangle", "house", "star", "hex"] as const;
+type ShapeName = (typeof SHAPE_NAMES)[number];
+// A ready palette for the colour pickers.
+const PALETTE = ["#f3f3f1", "#a8733f", "#f0353f", "#f97316", "#f59e0b", "#22c55e", "#14b8a6", "#2f7cf6", "#8b5cf6", "#ec4899", "#7a7a7a"];
+
+let customShapes: Record<string, string> = {};
+function setCustomShapes(map: unknown): void {
+  customShapes = {};
+  if (!map || typeof map !== "object") return;
+  for (const [k, v] of Object.entries(map as Record<string, unknown>)) {
+    if (typeof v === "string" && (SHAPE_NAMES as readonly string[]).includes(v)) customShapes[k] = v;
+  }
+}
+/** The shape the owner picked for an agent, or "" when they have not picked one. */
+function shapeFor(key: string): ShapeName | "" {
+  return (customShapes[key] as ShapeName | undefined) ?? "";
+}

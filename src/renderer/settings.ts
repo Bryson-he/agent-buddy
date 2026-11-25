@@ -11,6 +11,9 @@ interface SettingsView {
     lingerFinishedMin?: number;
     glass?: boolean;
     agentColours?: Record<string, string>;
+    agentShapes?: Record<string, string>;
+    riveCharacter?: boolean;
+    awayAfterMin?: number;
   };
   agents: { key: string; name: string }[];
   displays: { index: number; label: string }[];
@@ -37,6 +40,8 @@ const startWithWindows = $<HTMLInputElement>("startWithWindows");
 const display = $<HTMLSelectElement>("display");
 const linger = $<HTMLSelectElement>("linger");
 const glassEl = $<HTMLInputElement>("glass");
+const riveEl = $<HTMLInputElement>("riveCharacter");
+const awayEl = $<HTMLSelectElement>("awayAfterMin");
 const keysHint = $<HTMLElement>("keys-hint");
 const saved = $<HTMLElement>("saved");
 const rulesEl = $<HTMLElement>("rules");
@@ -74,32 +79,64 @@ function showSettings(view: SettingsView): void {
 
   linger.value = String(s.lingerFinishedMin ?? 5);
   glassEl.checked = s.glass !== false;
+  riveEl.checked = s.riveCharacter === true;
+  awayEl.value = String(s.awayAfterMin ?? 5);
   const k = view.shortcutKeys;
   keysHint.textContent = `${k.first} and ${k.second} answer a question. ${k.toggle} shows or hides the notch. ${k.panel} opens Activity.`;
 
-  // A colour per agent. "Reset" goes back to the built-in colour.
+  // A shape and a colour per agent. "Reset" goes back to the built-in look.
   const custom = s.agentColours ?? {};
+  const shapes = s.agentShapes ?? {};
   agentsEl.replaceChildren();
   agentsEmpty.hidden = view.agents.length > 0;
   for (const a of view.agents) {
     const row = document.createElement("div");
-    row.className = "row";
+    row.className = "row agent";
     const label = document.createElement("span");
     label.className = "label";
     label.textContent = a.name;
     const controls = document.createElement("span");
     controls.className = "colour";
+    // Shape
+    const shapeSel = document.createElement("select");
+    shapeSel.className = "shape";
+    shapeSel.setAttribute("aria-label", `Shape for ${a.name}`);
+    for (const name of ["", ...SHAPE_NAMES]) {
+      const o = document.createElement("option");
+      o.value = name;
+      o.textContent = name === "" ? "Default shape" : name[0].toUpperCase() + name.slice(1);
+      shapeSel.appendChild(o);
+    }
+    shapeSel.value = shapes[a.key] ?? "";
+    shapeSel.addEventListener("change", () => save({ agentShapes: { [a.key]: shapeSel.value === "" ? null : shapeSel.value } }));
+    controls.appendChild(shapeSel);
+    // Ready-made colours, then the picker for anything else
+    const swatches = document.createElement("span");
+    swatches.className = "swatches";
+    const current = (custom[a.key] ?? defaultColourFor(a.key)).toLowerCase();
+    for (const c of PALETTE) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "swatch";
+      b.style.background = c;
+      b.title = c;
+      b.setAttribute("aria-label", `${a.name}: ${c}`);
+      if (c === current) b.setAttribute("aria-pressed", "true");
+      b.addEventListener("click", () => save({ agentColours: { [a.key]: c } }));
+      swatches.appendChild(b);
+    }
+    controls.appendChild(swatches);
     const picker = document.createElement("input");
     picker.type = "color";
     picker.value = custom[a.key] ?? defaultColourFor(a.key);
     picker.setAttribute("aria-label", `Colour for ${a.name}`);
     picker.addEventListener("change", () => save({ agentColours: { [a.key]: picker.value } }));
     controls.appendChild(picker);
-    if (custom[a.key]) {
+    if (custom[a.key] || shapes[a.key]) {
       const reset = document.createElement("button");
       reset.type = "button";
       reset.textContent = "Reset";
-      reset.addEventListener("click", () => save({ agentColours: { [a.key]: null } }));
+      reset.addEventListener("click", () => save({ agentColours: { [a.key]: null }, agentShapes: { [a.key]: null } }));
       controls.appendChild(reset);
     }
     row.append(label, controls);
@@ -148,6 +185,8 @@ startWithWindows.addEventListener("change", () => save({ startWithWindows: start
 display.addEventListener("change", () => save({ display: Number(display.value) }));
 linger.addEventListener("change", () => save({ lingerFinishedMin: Number(linger.value) }));
 glassEl.addEventListener("change", () => save({ glass: glassEl.checked }));
+riveEl.addEventListener("change", () => save({ riveCharacter: riveEl.checked }));
+awayEl.addEventListener("change", () => save({ awayAfterMin: Number(awayEl.value) }));
 
 for (const btn of Array.from(document.querySelectorAll<HTMLButtonElement>("[data-sound]"))) {
   btn.addEventListener("click", () => window.settingsApi.testSound(btn.dataset.sound ?? "finished"));

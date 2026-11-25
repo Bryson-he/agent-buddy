@@ -40,6 +40,16 @@
           <input id="notifications" type="checkbox" class="switch" />
         </label>
         <label class="row">
+          <span class="label">Tell bots I'm away after<small>With no mouse or keyboard for this long, a bot's question goes to its chat at once instead of waiting on the notch</small></span>
+          <select id="awayAfterMin">
+            <option value="0">Never</option>
+            <option value="2">2 minutes</option>
+            <option value="5">5 minutes</option>
+            <option value="10">10 minutes</option>
+            <option value="15">15 minutes</option>
+          </select>
+        </label>
+        <label class="row">
           <span class="label">Keyboard shortcuts<small id="keys-hint"></small></span>
           <input id="shortcuts" type="checkbox" class="switch" />
         </label>
@@ -61,14 +71,18 @@
           </select>
         </label>
         <label class="row">
+          <span class="label">New character (trial)<small>The main character drawn and animated in Rive. Every agent is a ball in this mode for now.</small></span>
+          <input id="riveCharacter" type="checkbox" class="switch" />
+        </label>
+        <label class="row">
           <span class="label">See-through on hover<small>The notch fades and lets clicks through when the cursor is on it. Off: it stays solid.</small></span>
           <input id="glass" type="checkbox" class="switch" />
         </label>
       </section>
 
       <section>
-        <h2>Agent colours</h2>
-        <p id="agents-empty" class="hint">No agents yet. Once one has reported, you can pick its colour here.</p>
+        <h2>Agent shapes and colours</h2>
+        <p id="agents-empty" class="hint">No agents yet. Once one has reported, you can pick its shape and colour here.</p>
         <div id="agents"></div>
       </section>
 
