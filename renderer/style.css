@@ -593,3 +593,149 @@ body[data-ask="note"] .tools { display: none !important; }
   transition: opacity 160ms, min-height 460ms var(--ease), gap 460ms var(--ease);
 }
 body[data-size="expanded"] .row { padding: 6px 0; box-sizing: border-box; }
+
+/* =====================================================================
+   Layout v2
+   - The notch is as wide and as tall as its content, and animates there.
+   - A bigger character when expanded.
+   - Everything under the status line starts at one left edge (--indent).
+   - Other bots are rows, not pills.
+   ===================================================================== */
+:root { --face: 78px; --row: 86px; --indent: 94px; --minw: 320px; --maxw: 456px; }
+body[data-size="compact"] { --face: 30px; --row: 34px; --minw: 180px; --maxw: 456px; }
+
+.notch, body[data-size="compact"] .notch { width: auto; padding: 0; margin: 0 auto; width: fit-content; }
+.clip {
+  position: relative;
+  overflow: hidden;
+  width: var(--cw, auto);
+  height: var(--ch, auto);
+  border-radius: inherit;
+  transition: width 380ms var(--ease), height 380ms var(--ease);
+}
+.inner { width: max-content; min-width: var(--minw); max-width: var(--maxw); box-sizing: border-box; padding: 0 16px 0 8px; }
+body[data-size="compact"] .inner { padding: 0 12px 0 6px; }
+/* Text that wraps needs a fixed width to wrap against */
+body[data-state="needsYou"] .inner, body[data-ask="note"] .inner { width: 440px; }
+
+.row { gap: 10px; }
+body[data-size="compact"] .row { gap: 6px; }
+body[data-size="expanded"] .row { padding: 4px 0; }
+body[data-state="needsYou"] .row { padding: 10px 0 6px; }
+.text { padding-right: 4px; }
+body[data-size="expanded"] .text { padding-right: 30px; } /* room for the ⋯ button */
+
+/* One left edge for everything under the status line */
+.actions, .choices, .reply, .tools, .always-row { padding-left: var(--indent); }
+.detail { margin-left: var(--indent); }
+
+/* Type: the name leads, the current step is clear, the lines around it step back */
+body[data-size="expanded"] .name { font-size: 15px; line-height: 20px; height: 20px; letter-spacing: -0.1px; }
+body[data-size="expanded"] .status { font-size: 12.5px; line-height: 17px; color: #d7dae0; }
+.prev { font-size: 11px; line-height: 15px; color: #5f636c; padding-left: 0; }
+.prev:not(:empty) { height: 15px; }
+.next { color: #6f747d; }
+
+/* Whose status this is: a thin line in the lead bot's colour */
+.clip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 44%;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 2px 2px 0 0;
+  background: var(--lead, transparent);
+  opacity: 0.9;
+  transition: background 300ms, width 380ms var(--ease);
+}
+body[data-size="compact"] .clip::after { width: 28%; }
+body[data-ghost="1"] .clip::after { opacity: 0.25; }
+
+/* A change of lead bot fades in rather than snapping */
+.row.swap .text, .row.swap #face, .row.swap ~ * { animation: swap-in 300ms var(--ease); }
+@keyframes swap-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* Choices arrive one after another */
+.choice { animation: rise 300ms var(--ease) both; }
+.choice:nth-child(2) { animation-delay: 45ms; }
+.choice:nth-child(3) { animation-delay: 90ms; }
+.choice:nth-child(4) { animation-delay: 135ms; }
+.choice:nth-child(5) { animation-delay: 180ms; }
+
+/* ⋯ : shows while the cursor is on the notch, so nothing jumps; Note / Pause / Stop open from it */
+.more-btn {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  top: 8px;
+  right: 0;
+  width: 26px;
+  height: 22px;
+  padding: 0 0 6px;
+  border: 0;
+  border-radius: 11px;
+  background: #1d1e23;
+  color: #c9ced8;
+  font: 700 15px/1 "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms, filter 120ms;
+}
+body[data-size="expanded"][data-steer="1"] .more-btn { opacity: 1; pointer-events: auto; }
+.more-btn:hover { filter: brightness(1.3); }
+.more-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body[data-size="expanded"][data-tools="1"] { --w: auto; }
+
+/* Progress as a ring round the small face */
+.ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  stroke-dasharray: var(--ringp, 0) 100;
+  transform: rotate(-90deg);
+  transform-origin: 32px 32px;
+  opacity: 0;
+  transition: stroke-dasharray 420ms var(--ease), opacity 200ms;
+}
+body[data-size="compact"][data-ring="1"] .ring { opacity: 1; }
+
+/* Compact: the other bots in words */
+.summary { display: none; flex: none; font-size: 11px; color: var(--muted); white-space: nowrap; }
+body[data-size="compact"] .summary:not(:empty) { display: block; }
+.summary[data-needs="1"] { color: #fbbf24; }
+
+/* Expanded: every other bot gets a row of its own */
+.list { grid-template-columns: 1fr; gap: 1px; padding: 5px 0 10px; margin: 2px -8px 0 0; border-top: 1px solid #17181c; }
+.item, .item:only-child {
+  position: relative;
+  grid-column: auto;
+  height: 36px;
+  gap: 10px;
+  padding: 0 10px 0 6px;
+  border-radius: 10px;
+  background: none;
+  color: var(--muted);
+  transition: background 120ms, opacity 1.2s, filter 1.2s;
+}
+.item:hover { background: #121317; }
+.item .face.mini { width: 26px; height: 26px; flex: none; }
+.item .who { flex: none; max-width: 96px; font-size: 12px; font-weight: 600; color: color-mix(in srgb, var(--bot) 72%, #fff); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .line { flex: 1; font-size: 11.5px; }
+.item .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.item[data-state="working"] .dot, .item[data-state="upload"] .dot { animation: pulse 1.1s ease-in-out infinite; }
+.item .bar { position: absolute; left: 42px; right: 12px; bottom: 3px; height: 2px; border-radius: 1px; background: #1d1e23; overflow: hidden; }
+.item .bar i { display: block; height: 100%; width: var(--p, 0%); background: var(--accent); transition: width 420ms var(--ease); }
+.item.more { justify-content: flex-start; padding-left: 42px; background: none; font-size: 11.5px; }
+
+/* On its way out: a bot fades and greys before it leaves */
+.item.leaving, .chip.leaving { opacity: 0.4; filter: grayscale(0.8); }
+.chip { transition: opacity 1.2s, filter 1.2s; }
+body[data-leaving="1"] #face, body[data-leaving="1"] .rive-canvas, body[data-leaving="1"] .text { opacity: 0.5; filter: grayscale(0.7); transition: opacity 1.2s, filter 1.2s; }
+
+/* Layout v2, tuned from pictures */
+:root { --indent: 88px; }                       /* face 78 + gap 10: lines up with the status text */
+/* While asking, a smaller face: the question and its answers are the point, and they sit closer together */
+body[data-state="needsYou"] { --face: 58px; --row: 60px; --indent: 68px; }

@@ -10,7 +10,10 @@
     <!-- The notch: flush with the top edge of the screen. Compact = a face and one line;
          expanded = bigger face, agent name, steps, and buttons when the agent needs you. -->
     <div class="notch" id="pill">
-      <div class="row">
+      <!-- .inner takes whatever size its content needs; .clip is given that size by
+           renderer.ts and animates to it, so the notch grows and shrinks smoothly. -->
+      <div class="clip" id="clip"><div class="inner" id="inner">
+      <div class="row" id="row">
         <!-- The Rive character (Settings > New character). rive-face.ts keeps it exactly over the
              drawn ball, one canvas pixel per screen pixel, so it stays sharp; while it shows,
              the drawn body is hidden. The bubble and sparkles in the SVG stay on top. -->
@@ -66,6 +69,8 @@
 
           <!-- Top-left: typing dots while working, "!" when it needs you,
                a plain dot for finished (green) or error (red) -->
+          <!-- Progress as a ring round the face, for when the notch is small -->
+          <circle class="ring" id="ring" cx="32" cy="32" r="32.5" pathLength="100" />
           <g class="bubble">
             <rect class="b-pill" x="-12" y="-9" width="30" height="18" rx="9" />
             <circle class="b-dot" cx="3" cy="0" r="6" />
@@ -84,6 +89,10 @@
         </div>
         <!-- Compact: the other bots as small faces -->
         <div class="others" id="others"></div>
+        <!-- Compact: how many other bots are busy or waiting, in words -->
+        <span class="summary" id="summary"></span>
+        <!-- Shows while the cursor is on the notch: opens Note / Pause / Stop -->
+        <button class="more-btn" id="more-btn" type="button" aria-label="Note, pause or stop this bot" title="Note, pause or stop">⋯</button>
       </div>
       <!-- Longer background to a question, closed until asked for -->
       <details class="detail" id="detail" hidden><summary>Details</summary><div id="detail-text"></div></details>
@@ -113,6 +122,7 @@
       </form>
       <!-- Expanded: the other bots as tinted pills, a face and the line each is working on -->
       <div class="list" id="list"></div>
+      </div></div>
     </div>
     <script src="vendor/rive/rive.js"></script>
     <script src="../dist/renderer/shared.js"></script>

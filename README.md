@@ -12,7 +12,7 @@ Works with Claude Code, Cursor, Grok Bot, and anything that speaks MCP.
 
 <br />
 
-<img src="docs/images/demo.png" width="420" alt="Animation: an agent works through its steps, asks a question and gets an answer, a second agent asks before a risky command, and a third reports an error" />
+<img src="docs/images/demo.png" width="480" alt="Animation: an agent works through its steps, asks a question and gets an answer, a second agent asks before a risky command, and a third reports an error" />
 
 </div>
 
@@ -24,9 +24,9 @@ Agents work for minutes at a time, and you end up checking their window to see w
 
 - **See it at a glance.** Each agent's current step, the one before it, how long it has been going, and whether it has gone quiet.
 - **Answer from anywhere.** When an agent asks, answer on the notch, with a shortcut, or from the Windows notification. Yes or no, a pick from up to four choices, or a typed answer, plus "always answer this way".
-- **Talk back.** Leave an agent a note from the notch, or press Pause or Stop. It reaches the agent with its next status update.
+- **Talk back.** Put the cursor on the notch and press ⋯ to leave an agent a note, or to Pause or Stop it. It reaches the agent with its next status update.
 - **More than a status line.** Progress bars, a link to open what the agent just changed, reminders it can set for you, and a quiet or urgent level per update.
-- **Several agents at once.** One leads, the rest stay in view. Give each its own colour and one of thirteen body shapes.
+- **Several agents at once.** One leads and the rest get a row each; click a row to bring that agent to the front. The notch grows and shrinks to fit. Give each its own colour and one of thirteen body shapes.
 - **Out of your way.** Move the cursor onto the notch and it turns see-through and lets clicks through. Touch the character's face to wake it.
 - **Private by default.** A local server on `127.0.0.1`. Nothing leaves your PC unless you switch on the tunnel for a cloud bot.
 

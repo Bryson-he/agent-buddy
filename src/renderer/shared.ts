@@ -19,7 +19,7 @@ const FALLBACK_COLOURS = ["#a78bfa", "#4ade80", "#fbbf24", "#f472b6", "#38bdf8",
 const DEFAULT_NAME = "Agent Buddy";
 const DEFAULT_KEY = "agentbuddy";
 
-/** "Service Portal" and "service-portal" are the same agent. */
+/** "Help Desk" and "help-desk" are the same agent. */
 const keyOf = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "") || DEFAULT_KEY;
 
 let customColours: Record<string, string> = {};

@@ -52,8 +52,8 @@ function setStartWithWindows(on: boolean): void {
   app.setLoginItemSettings({ openAtLogin: false, path: process.execPath, args: [path.join(__dirname, "..", "..")] });
 }
 
-const OVERLAY_WIDTH = 420;
-const OVERLAY_HEIGHT = 540; // room for a long question, its details and four choices
+const OVERLAY_WIDTH = 480;
+const OVERLAY_HEIGHT = 660; // room for a long question, its details, four choices and rows for other bots
 const DEFAULT_AGENT = "Agent Buddy";
 const CURSOR_NEAR_PX = 80;
 const CURSOR_MOVE_MIN = 2;
@@ -1398,7 +1398,7 @@ async function snapshotAll(dir: string): Promise<void> {
     ["ask-multi", () => { setState("idle", undefined, "Atlas"); setState("needsYou", "Which rows should I update in the tracker?", "Juno", ["Row 10: North depot", "Row 11: East depot", "Row 12: West depot"], undefined, { list: true, multi: true, detail: "All three were checked in today.\nRow 11 still shows the old serial number.\nNothing else in the sheet changes." }); void overlay?.webContents.executeJavaScript("setTimeout(() => { document.getElementById('detail').open = true; document.getElementById('opt-0').click(); document.getElementById('opt-2').click(); }, 500)"); }],
     // A status with progress and a link, and the Note / Pause / Stop buttons (shown as if the cursor were on the notch).
     ["progress-link", () => { setState("idle", undefined, "Juno"); void overlay?.webContents.executeJavaScript("bots.clear(); refresh();").then(() => { setState("working", "Uploading the checklist PDFs", "Juno"); setState("working", "Creating records 13-18", "Juno", undefined, "Verify batch 3", undefined, { progress: { done: 12, total: 30 }, linkLabel: "Open tracker" }); }); }],
-    ["steer", () => { void overlay?.webContents.executeJavaScript("hovering = true; refresh(); updateSize();"); }],
+    ["steer", () => { void overlay?.webContents.executeJavaScript("hovering = true; toolsOpen = true; refresh(); updateSize();"); }],
     ["note-sent", () => { leaveForAgent("Juno", { note: "Skip row 12 for now" }); }],
   ] as const) {
     act();
@@ -1456,7 +1456,7 @@ async function recordDemo(dir: string): Promise<void> {
   const loop = (async () => {
     while (recording) {
       const t0 = Date.now();
-      frames.push({ t: t0 - start, png: (await win.webContents.capturePage({ x: 0, y: 0, width: OVERLAY_WIDTH, height: 300 })).toPNG() });
+      frames.push({ t: t0 - start, png: (await win.webContents.capturePage({ x: 0, y: 0, width: OVERLAY_WIDTH, height: 340 })).toPNG() });
       const left = 70 - (Date.now() - t0);
       if (left > 0) await wait(left);
     }

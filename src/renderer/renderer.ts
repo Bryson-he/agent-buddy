@@ -50,7 +50,7 @@ const TIMING = {
   bumpAfterLeave: 1_200,
   bumpAfterReact: 1_500,
   greetingToIdle: 2_600,
-  pinLeadMs: 8_000,
+  pinLeadMs: 45_000,
   slapWindow: 4_000,
   jiggleWindow: 1_000,
   blinkHold: 130,
@@ -425,6 +425,8 @@ interface AskExtras {
 }
 interface StatePayload extends AskExtras { state: AgentState; text?: string; agent?: string; options?: string[]; next?: string }
 let noteFor = "";                    // the bot (by key) a note is being typed for
+let toolsOpen = false;               // Note / Pause / Stop are showing (opened from ⋯)
+let shownLeadKey = "";               // to fade in a change of lead bot
 const multiPicked = new Set<number>(); // rows ticked in a pick-several question
 
 const STALE_AFTER_MIN = 5; // a working bot that has said nothing for this long is flagged
@@ -440,13 +442,25 @@ let animating = true;
 let lastNeedsYou = false;
 
 function rank(b: Bot, now: number): number {
+  // The lead stays put. It used to jump to whichever bot spoke last, which with
+  // several bots meant the notch never settled. Now only three things take the
+  // lead from a bot that is still busy: one you clicked, one that needs you,
+  // and a fresh error.
   if (pinnedKey === b.key && now < pinnedUntil) return 7;
   if (b.state === "needsYou") return 6;
-  if (b.state !== "idle" && now - b.changedAt < TIMING.rankRecentMs) return 5;
-  if (b.state === "error") return 4;
-  if (b.state === "working" || b.state === "upload" || b.state === "greeting") return 3;
+  if (b.state === "error" && now - b.changedAt < 10_000) return 5;
+  const busy = b.state === "working" || b.state === "upload";
+  if (busy && b.key === lead.key) return 4;
+  if (busy || b.state === "greeting") return 3;
+  if (b.state === "error") return 2.5;
   if (b.state === "finished") return 2;
   return 0;
+}
+
+/** True for the last few seconds before a bot that has nothing more to say leaves the notch. */
+function isLeaving(b: Bot): boolean {
+  if (b.state !== "finished" && b.state !== "idle" && b.state !== "error") return false;
+  return performance.now() - b.updatedAt > KEEP_MS[b.state] - 8_000;
 }
 
 function ordered(now: number): Bot[] {
@@ -570,11 +584,25 @@ function renderLead(): void {
   }
   linkBtn.hidden = !lead.linkLabel || asking;
   linkBtn.textContent = `${lead.linkLabel ?? ""} ↗`;
+  // ⋯ shows while the cursor is on the notch; Note / Pause / Stop open from it, so
+  // simply passing the cursor over the notch does not make it change height.
   const canSteer = lead.key !== DEFAULT_KEY && !asking && hovering && reaction === "none";
-  noteBtn.hidden = !canSteer;
-  pauseBtn.hidden = stopBtn.hidden = !(canSteer && (lead.state === "working" || lead.state === "upload"));
+  if (!canSteer) toolsOpen = false;
+  body.dataset.steer = canSteer ? "1" : "0";
+  noteBtn.hidden = !(canSteer && toolsOpen);
+  pauseBtn.hidden = stopBtn.hidden = !(canSteer && toolsOpen && (lead.state === "working" || lead.state === "upload"));
   waitingEl.textContent = asking ? "" : lead.waiting ?? "";
-  body.dataset.tools = !asking && (!linkBtn.hidden || canSteer || waitingEl.textContent !== "") ? "1" : "0";
+  body.dataset.tools = !asking && (!linkBtn.hidden || !noteBtn.hidden || waitingEl.textContent !== "") ? "1" : "0";
+
+  // Whose status this is, progress as a ring for the small notch, and fading before it leaves.
+  root.style.setProperty("--lead", lead.key === DEFAULT_KEY ? "transparent" : colourFor(lead.key));
+  body.dataset.ring = p && !asking ? "1" : "0";
+  (face as unknown as SVGElement).style.setProperty("--ringp", p ? String(Math.round((100 * p.done) / p.total)) : "0");
+  body.dataset.leaving = isLeaving(lead) && bots.size > 0 && lead.key !== DEFAULT_KEY ? "1" : "0";
+  if (lead.key !== shownLeadKey) {
+    if (shownLeadKey) { rowEl.classList.remove("swap"); void rowEl.offsetWidth; rowEl.classList.add("swap"); }
+    shownLeadKey = lead.key;
+  }
   const hasDetail = asking && !!lead.detail;
   if (detailEl.hidden === hasDetail) { detailEl.hidden = !hasDetail; detailEl.open = false; }
   if (detailText.textContent !== (lead.detail ?? "")) detailText.textContent = lead.detail ?? "";
@@ -597,7 +625,12 @@ function bindPromote(el: HTMLElement, key: string): void {
 function renderOthers(others: Bot[]): void {
   const shown = others.slice(0, MAX_OTHERS);
   const extra = others.length - shown.length;
-  const sig = shown.map((b) => `${b.key}|${b.state}|${b.text}|${b.nextText}`).join("\n") + `\n+${extra}|${pinnedKey}`;
+  const sig = shown.map((b) => `${b.key}|${b.state}|${b.text}|${b.progress?.done}/${b.progress?.total}|${isLeaving(b)}`).join("\n") + `\n+${extra}|${pinnedKey}`;
+  // Compact: say in words what the other bots are up to.
+  const needs = others.filter((b) => b.state === "needsYou").length;
+  const working = others.filter((b) => b.state === "working" || b.state === "upload").length;
+  summaryEl.textContent = needs > 0 ? `${needs} need${needs === 1 ? "s" : ""} you` : others.length >= 2 && working > 0 ? `${working} working` : "";
+  summaryEl.dataset.needs = needs > 0 ? "1" : "0";
   root.style.setProperty("--extra", `${shown.length * 24 + (extra > 0 ? 22 : 0)}px`);
   body.dataset.others = String(others.length);
   if (sig === othersSig) return;
@@ -607,7 +640,7 @@ function renderOthers(others: Bot[]): void {
   listEl.replaceChildren();
   for (const b of shown) {
     const chip = document.createElement("span");
-    chip.className = "chip";
+    chip.className = isLeaving(b) ? "chip leaving" : "chip";
     chip.dataset.state = b.state;
     chip.title = `${b.name}: ${b.text} (click to show)`;
     chip.appendChild(miniFace(b));
@@ -615,15 +648,28 @@ function renderOthers(others: Bot[]): void {
     othersEl.appendChild(chip);
 
     const item = document.createElement("div");
-    item.className = "item";
+    item.className = isLeaving(b) ? "item leaving" : "item";
     item.dataset.state = b.state;
     item.title = `${b.name}: ${b.text} (click to show)`;
     item.style.setProperty("--bot", colourFor(b.key));
+    // A row: face, name, what it is doing, a dot for its state, and its progress if it sent any.
     item.appendChild(miniFace(b));
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = b.name;
     const line = document.createElement("span");
     line.className = "line";
     line.textContent = b.text;
-    item.appendChild(line);
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    item.append(who, line, dot);
+    if (b.progress) {
+      const bar = document.createElement("span");
+      bar.className = "bar";
+      bar.style.setProperty("--p", `${Math.round((100 * b.progress.done) / b.progress.total)}%`);
+      bar.appendChild(document.createElement("i"));
+      item.appendChild(bar);
+    }
     bindPromote(item, b.key);
     listEl.appendChild(item);
   }
@@ -1065,6 +1111,22 @@ const stopBtn = document.getElementById("stop-btn") as HTMLButtonElement;
 const waitingEl = document.getElementById("waiting") as HTMLElement;
 const detailEl = document.getElementById("detail") as HTMLDetailsElement;
 const detailText = document.getElementById("detail-text") as HTMLElement;
+const rowEl = document.getElementById("row") as HTMLElement;
+const summaryEl = document.getElementById("summary") as HTMLElement;
+const moreBtn = document.getElementById("more-btn") as HTMLButtonElement;
+moreBtn.addEventListener("click", () => { toolsOpen = !toolsOpen; refresh(); });
+
+// The notch's size: .inner is whatever its content needs, and .clip is told to be
+// that size, which it animates to. So adding a line, a row or a button grows the
+// notch smoothly, and a short status makes a short notch.
+const clipEl = document.getElementById("clip") as HTMLElement;
+const innerEl = document.getElementById("inner") as HTMLElement;
+new ResizeObserver(() => {
+  const r = innerEl.getBoundingClientRect();
+  clipEl.style.setProperty("--cw", `${Math.ceil(r.width)}px`);
+  clipEl.style.setProperty("--ch", `${Math.ceil(r.height)}px`);
+}).observe(innerEl);
+
 linkBtn.addEventListener("click", () => window.buddy.openLink(lead.name));
 noteBtn.addEventListener("click", () => { noteFor = lead.key; refresh(); replyInput.focus(); });
 pauseBtn.addEventListener("click", () => window.buddy.leave(lead.name, { command: "pause" }));

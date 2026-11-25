@@ -163,3 +163,13 @@ Thirteen body shapes: ball, cloud, square, sparkle, clover, drop, burst, egg, pi
 - **Drawn character and small faces:** `shapeRadius(kind, angle)` gives each outline as a distance from the centre; `outline()` turns it into the 96-point path every body shares, so shapes still morph.
 - **Rive character:** the body is a `Solo` holding one parametric shape per body (ellipse, rectangle, polygon, star), switched by the view model's `shape` number through the Shape layer. The wash, shading and highlight are clipped to the Solo, so they follow whichever body shows. Rive ids cannot end in `:0`.
 - The colour key is the agent's name in lower case with only letters and digits (`colourKey` in `main.ts`, `keyOf` in the pages). Settings lists one row per key.
+
+## Layout v2 (v0.9.0)
+
+- **Size:** `.inner` is as wide and tall as its content needs (`max-content`, between `--minw` and `--maxw`); a ResizeObserver in `renderer.ts` copies that size to `.clip` (`--cw`, `--ch`), which animates to it. The overlay window is 480 x 660 so the notch has room to grow. Wrapping text (a question, a note) gets a fixed width to wrap against.
+- **One left edge:** everything under the status line (buttons, choices, text box, details, tools) starts at `--indent` (face width plus the row gap). While asking, the face is smaller and `--indent` follows.
+- **A calm lead:** `rank()` keeps the lead on a busy bot. Only a bot you clicked (pinned for 45 s), one that needs you, or a fresh error takes it. There is no "whoever spoke last" rule any more.
+- **Other bots are rows** when expanded (face, name, status, state dot, thin progress bar), and small faces plus a count in words when compact (`#summary`). Clicking either opens that bot as the lead.
+- **⋯** shows while the cursor is on the notch; Note, Pause and Stop open from it (`toolsOpen`), so hovering does not change the notch's height.
+- **Touches:** a line in the lead bot's colour along the bottom (`--lead`), a progress ring round the face when compact (`.ring`, `--ringp`), a fade-in when the lead changes (`.row.swap`), and bots greying out for their last 8 seconds (`isLeaving`).
+- The stylesheet is layered: later sections override earlier ones (questions, row growth, layout v2). Read to the end of `style.css` before changing a size.
